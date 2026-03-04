@@ -19,7 +19,7 @@ Resulting files include a list of agents with attributes (e.g., age, gender, inc
 See [tutorials/MIDAS](https://github.com/ACCIDDA/GeoPops/tree/main/tutorials/MIDAS) for more detailed usage in a Notebook tutorial. Set up and basic usage below.
 
 
-First, create a **Julia environment** with the dependencies listed below. It may be easiest to store the environment in the same folder you will use for output files. While called with Python commands, combinatorial optimization, school and workplace assignment, and network generation steps occur in Julia to decrease run time. The following terminal commands should work with MacOS. Don't copy the comments; these are just for reference. Julia download instructions [here](https://julialang.org/install/).
+First, create a **Julia environment** with the dependencies listed below. It may be easiest to store the environment in the same folder you will use for output files. While called with Python commands, combinatorial optimization, school and workplace assignment, and network generation steps occur in Julia to decrease run time. The following terminal commands should work with MacOS. Don't copy the comments; these are just for reference. The Julia website also has download instructions [here](https://julialang.org/install/).
 ```
 cd "YOUR_PATH"
 curl -fsSL https://install.julialang.org | sh
@@ -41,7 +41,7 @@ add MatrixMarket@0.4.0
 add ProportionalFitting@0.3.0
 status                   # View list of packages
 ```
-If you are using Windows, try the following. Julia download instructions [here](https://julialang.org/install/). Look for "For Windows instructions, click here".
+If you are using Windows, try the following. The Julia website also has download instructions [here](https://julialang.org/install/). Look for "For Windows instructions, click here".
 ```
 winget install --name Julia --id 9NJNWW8PVKMN -e -s msstore
 ```
@@ -53,7 +53,7 @@ pip install geopops
 
 Next, obtain a **Census API key** [here](https://api.census.gov/data/key_signup.html), which will be used for pulling Census data. 
 
-Now in a Python or Notebook script, create a dictionary of parameters. Default parameters are stored in a package file called `config.json`. Pass your dictionary into `WriteConfig()` to overwrite config.json with the parameters for your population of interest. Here's an example to for Howard County, MD.
+Now in a Python or Notebook script, create a dictionary of parameters. Default parameters are stored in a package file called `config.json`. Pass your dictionary into `WriteConfig()` to overwrite config.json with the parameters for your population of interest. Here's an example for Howard County, MD.
 ```
 pars_geopops = {'path': 'YOUR_OUTPUT_DIR', # designate folder for output files
                 'census_api_key': "YOUR_CENSUS_API_KEY", 
@@ -68,8 +68,8 @@ c.get_pars() # View config.json as dictionary
 ```
 The commands below will create your popoulation and store files in the output directory defined above. Downloaded raw data files are stored in the subfolders census, geo, pums, school, and work. Files created in the preprocessing step are stored in the subfolder called processed. The population in jlse format is stored in the subfolder jlse. `Export()` outputs csv versions into the subfolder pop_export. 
 ```
-geopops.DownloadData()          # Download all Census and other data sources
-geopops.ProcessData()           # Preprocessing for next steps
+geopops.DownloadData(auto_run=True)          # Download all Census and other data sources
+geopops.ProcessData()                         # Preprocessing for next steps
 j = geopops.RunJulia()
 j.run_all()                     # Run Julia scripts (much faster than Python). Can also run separately
 # j.CO()                        # Combinatorial optimization. Output in jlse folder                    
@@ -85,7 +85,19 @@ geopops.ForStarsim.SubgroupTracking()   # Returns a Starsim Analyzer object for 
 ## Tutorials
 See [tutorials/MIDAS](https://github.com/ACCIDDA/GeoPops/tree/main/tutorials/MIDAS) for more detailed usage in a Notebook tutorial. GeoPops is in development, and we welcome feedback! Please log any issues as you try it out.
 
+## Support
+GeoPops development is a collaboration with the following institutions:
+* [ACCIDDA](https://accidda.org/)
+* [Insight Net](https://insightnet.us/)
+* [Johns Hopkins University Center for Systems Science and Engineering](https://systems.jhu.edu/)
+* [One Health Trust](https://onehealthtrust.org/)
+* [Institute for Disease Modeling](https://www.idmod.org/)
+* [Johns Hopkins University Applied Physics laboratory](https://www.jhuapl.edu/)
+* [University of Virginia](https://www.virginia.edu/)
+
 ## Conferences
+
+### Insight Net Annual Meeting 2026
 
 ### MIDAS 2025
 **GeoPops demonstration: An open-source, adaptable framework for agent-based modeling on synthetic populations**
