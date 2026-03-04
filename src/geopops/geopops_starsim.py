@@ -85,6 +85,9 @@ class ForStarsim:
             people = pd.read_csv(f'{self.path}/pop_export/people.csv')
             ppl_df = adj_mat_keys.merge(people, on=['p_id','hh_id','cbg_id'], how='left')
             
+            # Household ID
+            ppl_df['hh_id'] = ppl_df['hh_id'].astype(float)
+            
             # Age groups
             ppl_df.loc[ppl_df['age'] >= 0, 'agegroup'] = 0.0
             ppl_df.loc[ppl_df['age'] >= 10, 'agegroup'] = 1.0
@@ -111,6 +114,8 @@ class ForStarsim:
             # print(ppl_df['cbg_geocode'].unique())
             ppl_df['state'] = ppl_df['cbg_geocode'].astype(str).str[:2].replace('na','0').astype(float)
             ppl_df['county'] = ppl_df['cbg_geocode'].astype(str).str[:5].replace('na','0').astype(float)
+            ppl_df['tract'] = ppl_df['cbg_geocode'].astype(str).str[:11].replace('na','0').astype(float)
+            ppl_df['cbg'] = ppl_df['cbg_geocode'].astype(float).astype(str).str[:12].replace('na','0').astype(float)
             # print(ppl_df['cbg_geocode'].dtype)
             # ppl_df['cbg'] = ppl_df['cbg_geocode'].astype(float).astype(str).str[:12].replace('na','0').astype(float)
             # print(len(ppl_df['cbg'].unique()))
@@ -118,17 +123,18 @@ class ForStarsim:
             # Income category and disease vulnerability
             # Income, 1 is <=40k, 2 is >40k, 0 is null/not commuter
             # ppl_df['ses'] = ppl_df['commuter_income_category'].fillna(0.0)
-            ppl_df.loc[ppl_df['commuter'] == 1, 'ses'] = ppl_df['commuter_income_category'].fillna(0.0)
+            # ppl_df.loc[ppl_df['commuter'] == 1, 'ses'] = ppl_df['commuter_income_category'].fillna(0.0)
             
             # Disease vulnerability, 1 is <= age 65, 2 is > age 65, 0 is null/no age data
-            ppl_df.loc[ppl_df['age'] <= 65, 'vul'] = 1.0
-            ppl_df.loc[ppl_df['age'] >  65, 'vul'] = 2.0
-            ppl_df['age'] = ppl_df['age'].fillna(0.0)
+            # ppl_df.loc[ppl_df['age'] <= 65, 'vul'] = 1.0
+            # ppl_df.loc[ppl_df['age'] >  65, 'vul'] = 2.0
+            # ppl_df['age'] = ppl_df['age'].fillna(0.0)
             
             # Export to csv
             ppl_df.to_csv(f'{self.path}/pop_export/people_all.csv', index=False)
             
             # Create Starsim states
+            hh_id = ss.FloatArr('hh_id', default=ss.BaseArr(ppl_df['hh_id'].values))
             age = ss.FloatArr('age', default=ss.BaseArr(ppl_df['age'].values))
             female = ss.FloatArr('female', default=ss.BaseArr(ppl_df['female'].values))
             agegroup = ss.FloatArr('agegroup', default=ss.BaseArr(ppl_df['agegroup'].values))
@@ -136,15 +142,17 @@ class ForStarsim:
             cbg_id = ss.FloatArr('cbg_id', default=ss.BaseArr(ppl_df['cbg_id'].values))
             state = ss.FloatArr('state', default=ss.BaseArr(ppl_df['state'].values))
             county = ss.FloatArr('county', default=ss.BaseArr(ppl_df['county'].values))
-            wrk = ss.FloatArr('wrk', default=ss.BaseArr(ppl_df['commuter'].values)) # only commuters have income categories
+            tract = ss.FloatArr('tract', default=ss.BaseArr(ppl_df['tract'].values))
+            cbg = ss.FloatArr('cbg', default=ss.BaseArr(ppl_df['cbg'].values))
+            # wrk = ss.FloatArr('wrk', default=ss.BaseArr(ppl_df['commuter'].values)) # only commuters have income categories
             worker = ss.FloatArr('worker', default=ss.BaseArr(ppl_df['commuter'].values)) # only commuters have income categories
-            student = ss.FloatArr('student', default=ss.BaseArr(ppl_df['student'].values))
-            ses = ss.FloatArr('ses', default=ss.BaseArr(ppl_df['ses'].values))
-            vul = ss.FloatArr('vul', default=ss.BaseArr(ppl_df['vul'].values))
-            hsl = ss.FloatArr('hsl', default=np.random.choice([0.0, 1.0,2.0], size=len(ppl_df), p=[1/3, 1/3, 1/3]))
+            # student = ss.FloatArr('student', default=ss.BaseArr(ppl_df['student'].values))
+            # ses = ss.FloatArr('ses', default=ss.BaseArr(ppl_df['ses'].values))
+            # vul = ss.FloatArr('vul', default=ss.BaseArr(ppl_df['vul'].values))
+            # hsl = ss.FloatArr('hsl', default=np.random.choice([0.0, 1.0,2.0], size=len(ppl_df), p=[1/3, 1/3, 1/3]))
             
             # Create the people object
-            self.ppl = ss.People(n_agents=len(ppl_df), extra_states=[agegroup, race, cbg_id, state, county, wrk, worker, ses, vul, hsl])
+            self.ppl = ss.People(n_agents=len(ppl_df), extra_states=[agegroup, race, state, county, tract, cbg, cbg_id,worker, hh_id])
             
             # Add the age state to the existing people object 
             self.ppl.states.append(age, overwrite=True)
