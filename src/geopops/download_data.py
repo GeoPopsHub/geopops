@@ -9,6 +9,10 @@ import time
 from pathlib import Path
 from curl_cffi import requests as curl_requests
 import urllib3
+import lzma
+import platform
+import subprocess
+import shlex
 
 # Disable SSL warnings for downloads with verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -320,6 +324,9 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
         year_ACS (str): The year of the ACS data
         year_DEC (str): The year of the decennial data
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+        
+    Returns:
+        Outputs data files in the census folder
     """
 
     config_path = os.path.join(BASE_DIR, "config.json")
@@ -348,7 +355,7 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
     
     for state_i in state_fips:
         if verbose:
-            print(f"Downloading Census data for {state_i}")
+            print(f"Downloading Census data for {state_i} into census folder")
         
         # Process ACS table codes
         table_codes = pd.DataFrame({
@@ -467,6 +474,14 @@ def pull_pums_data(states, year, verbose=1):
         states (list): List of state abbreviations
         year (str): The year of the PUMS data
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+        
+    Returns:
+        Outputs data files in the pums folder
+        
+    Notes: 2024 and 2025 urls require password to access. If main year > 2023, use 2023 data.
+    This means that the combinatorial optimization algorithm will combine households from 2023 PUMS data
+    such that the set reasonably approximates Census distributions for target variables in the year specified in the config file.
+    This can still produce a population that is reasonably representative of the target year.
     """
     
     states = [s.lower() for s in states]
@@ -475,6 +490,8 @@ def pull_pums_data(states, year, verbose=1):
     
     # Set the URL of the file to download
     for state in states:
+        if year > 2023:
+            year = 2023
         file_urls.append((state, f"https://www2.census.gov/programs-surveys/acs/data/pums/{year}/5-Year/csv_h{state}.zip"))
         file_urls.append((state, f"https://www2.census.gov/programs-surveys/acs/data/pums/{year}/5-Year/csv_p{state}.zip"))
         # if verbose:
@@ -482,7 +499,7 @@ def pull_pums_data(states, year, verbose=1):
     for state_i in states:
         
         if verbose:
-            print(f"Downloading PUMS data for {state_i}")
+            print(f"Downloading PUMS data for {state_i} into pums folder")
         
         urls_list = [url for state, url in file_urls if state == state_i]
         
@@ -560,6 +577,9 @@ def download_shapefiles(state_fips, year, verbose=1):
         state_fips (list): List of state abbreviations
         year (str): The year of the shapefiles
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+        
+    Returns:
+        Outputs data files in the geo folder
     """
     
     file_urls = []
@@ -571,7 +591,7 @@ def download_shapefiles(state_fips, year, verbose=1):
     for state_i in state_fips:
         
         if verbose:
-            print(f"Downloading Shapefiles for {state_i}")
+            print(f"Downloading Shapefiles for {state_i} into geo folder")
         
         urls_list = [url for state, url in file_urls if state == state_i]
         
@@ -605,10 +625,13 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
         year (str): The year of the LODES data
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
         
-    Notes: As of June 25, 2025, no LODES data available for 2023.
+    Returns:
+        Outputs data files in the work folder
+        
+    Notes: No LODES data for 2024 or 2025, so use 2023 data if year > 2023.
     """
     if verbose:
-        print("Downloading LODES data")
+        print("Downloading LODES data into work folder")
     # Determine version based on year
     version = "LODES8" if year >= 2020 else "LODES7"
     
@@ -622,7 +645,9 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
         # Download and save OD main JT01
         # print(f"downloading lodes od main {state_i}")
         
-        # For OD main JT01        
+        # For OD main JT01 
+        if year > 2023:
+            year = 2023
         od_main_url = f"https://lehd.ces.census.gov/data/lodes/{version}/{state_i}/od/{state_i}_od_main_JT01_{year}.csv.gz"
         outfile = os.path.join(state_dir, f"{state_i}_od_main_JT01_{year}.csv.gz")
         try_download(od_main_url, outfile)
@@ -732,9 +757,12 @@ def download_cbp_data(verbose=1):
     
     Args:
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+        
+    Returns:
+        Outputs data files in the work folder
     """
     if verbose:
-        print("Downloading CBP data")
+        print("Downloading CBP data into work folder")
     cbp_dir = os.path.join(OUTPUT_DIR, "work")
     os.makedirs(cbp_dir, exist_ok=True)
     
@@ -748,9 +776,12 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
     Args:
         main_year (str): The year of the crosswalk file
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+        
+    Returns:
+        Outputs data files in the geo folder
     """
     if verbose:
-        print("Downloading Census Tract to PUMA crosswalk file")
+        print("Downloading Census Tract to PUMA crosswalk file into geo folder")
     geo_dir = os.path.join(OUTPUT_DIR, "geo")
     os.makedirs(geo_dir, exist_ok=True)
     
@@ -802,20 +833,42 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
     #     except Exception as e:
     #         print(f"Failed to download {url}: {e}")
             
-def geocore_files(verbose=1):
-    """Copy all files from the local 'geocore' folder into the 'geo' folder.
+def geocorr_files(verbose=1):
+    """Copy geocorr files from the local 'geocorr' folder into the 'geo' folder.
 
-    Uses __file__ to determine this script's directory, then copies files
-    from '<script_dir>/geocore' to '<script_dir>/geo'. The 'geo' folder is
-    the same destination used by download_shapefiles.
+    If main_year < 2020, copies only files matching 'geocorr2018*'.
+    If main_year >= 2020, copies only files matching 'geocorr2022*'.
     
-    Args:
-        verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+    Returns:
+        Outputs data files in the geo folder
     """
     if verbose:
-        print("Copying geocore files")
+        print("Copying geocorr files into geo folder")
+
+    # Load main_year from config to decide which geocorr files to copy
+    config_path = os.path.join(BASE_DIR, "config.json")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"config.json file not found at {config_path}. Please create this file with the required configuration."
+        )
+    with open(config_path, "r") as f:
+        config = json.load(f)
+
+    if "main_year" not in config:
+        raise KeyError("main_year not found in config. Please add the main year to the configuration.")
+
+    try:
+        main_year = int(config["main_year"])
+    except Exception:
+        raise ValueError("main_year in config.json must be an integer.")
+
+    if main_year < 2020:
+        prefix = "geocorr2018"
+    else:
+        prefix = "geocorr2022"
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    source_dir = os.path.join(script_dir, "geocore")
+    source_dir = os.path.join(script_dir, "geocorr")
     dest_dir = os.path.join(OUTPUT_DIR, "geo")
 
     if not os.path.isdir(source_dir):
@@ -826,15 +879,16 @@ def geocore_files(verbose=1):
 
     copied_any = False
     for entry in os.listdir(source_dir):
+        if not entry.startswith(prefix):
+            continue
         src_path = os.path.join(source_dir, entry)
         if os.path.isfile(src_path):
             dst_path = os.path.join(dest_dir, entry)
             shutil.copy2(src_path, dst_path)
-            # print(f"Copied: geo/{entry}")
             copied_any = True
 
-    if not copied_any:
-        print(f"No files to copy from {source_dir}")
+    if not copied_any and verbose:
+        print(f"No files matching '{prefix}*' to copy from {source_dir}")
 
 def download_school_data(main_year, verbose=1):
     """Function for downloading school data
@@ -842,14 +896,25 @@ def download_school_data(main_year, verbose=1):
     Args:
         main_year (str): The year of the school data
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+        
+    Returns:
+        Outputs data files in the school folder
+    
+    Notes: This function uses the python package 'zipfile' to extract the zip file.
+    This will cause an error "NotImplementedError" if the interpreter used to build the environment 
+    does not have full LZMA support. 
+    
+    MacOS workaround: use the system 'unzip' command instead of 'zipfile'.
+    Windows workaround: use Expand-Archive or 7‑Zip
     """
     school_dir = os.path.join(OUTPUT_DIR, "school")
     os.makedirs(school_dir, exist_ok=True)
     
     if verbose:
-        print(f"Downloading school data")
+        print(f"Downloading school data into school folder")
     
     # Download school location data
+    # https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_2021.zip
     url = f"https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}.zip"
 
     # Download the zip file
@@ -884,8 +949,8 @@ def download_school_data(main_year, verbose=1):
                 else:
                     os.remove(dest_path)
             os.rename(source_path, dest_path)
-        else:
-            print(f"Item {item_to_move} not found")
+        # else:
+        #     print(f"Item {item_to_move} not found")
 
     # Delete files (zip file and empty extracted folder)
     files_to_delete = [
@@ -905,17 +970,31 @@ def download_school_data(main_year, verbose=1):
                 os.rmdir(item_to_delete)
             else:
                 os.remove(item_to_delete)
-        else:
-            print(f"Item {os.path.basename(item_to_delete)} not found")
+        # else:
+        #     print(f"Item {os.path.basename(item_to_delete)} not found")
             
     # Download school enrollment data
     # print("Downloading school enrollment data... takes a while")
 
     # URLs for school enrollment data
+    
+    if main_year == 2019:
+        en_str = "082120"
+    elif main_year == 2020:
+        en_str = "080621"
+    elif main_year == 2021:
+        en_str = "071722"
+    elif main_year == 2022:
+        en_str = "083023"
+    elif main_year == 2023:
+        en_str = "073124"
+    elif main_year == 2024:
+        en_str = "073025"
+    
     enrollment_urls = [
-        f"https://nces.ed.gov/ccd/Data/zip/ccd_sch_029_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_w_1a_082120.zip",  # Directory
-        f"https://nces.ed.gov/ccd/Data/zip/ccd_SCH_052_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_l_1a_082120.zip",  # Membership
-        f"https://nces.ed.gov/ccd/Data/zip/ccd_sch_059_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_l_1a_082120.zip"   # Staff
+        f"https://nces.ed.gov/ccd/Data/zip/ccd_sch_029_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_w_1a_{en_str}.zip",  # Directory
+        f"https://nces.ed.gov/ccd/Data/zip/ccd_SCH_052_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_l_1a_{en_str}.zip",  # Membership
+        f"https://nces.ed.gov/ccd/Data/zip/ccd_sch_059_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_l_1a_{en_str}.zip"   # Staff
     ]
 
     # Download and extract each enrollment data file
@@ -933,8 +1012,44 @@ def download_school_data(main_year, verbose=1):
             f.write(response.content)
         
         # Extract the zip file
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(school_dir)
+        # This will cause an error "NotImplementedError" if the interpreter used to build the environment 
+        # does not have full LZMA support
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(school_dir)
+        except NotImplementedError:
+            system = platform.system()
+            zip_basename = os.path.basename(zip_path)
+
+            if system == "Darwin":  # macOS
+                # Use system 'unzip'
+                subprocess.run(
+                    ["unzip", "-o", zip_basename],
+                    cwd=school_dir,
+                    check=True,
+                )
+
+            elif system == "Windows":
+                # Use PowerShell Expand-Archive
+                # Build a safe PowerShell command string
+                src = os.path.join(school_dir, zip_basename)
+                dst = school_dir
+                ps_cmd = (
+                    f"Expand-Archive -LiteralPath {shlex.quote(src)} "
+                    f"-DestinationPath {shlex.quote(dst)} -Force"
+                )
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_cmd],
+                    check=True,
+                )
+
+            else:
+                # Other platforms: re-raise with guidance
+                raise RuntimeError(
+                    "ZIP uses a compression method not supported by this Python. "
+                    "On Unix-like systems, install a Python build with LZMA support "
+                    "or extract the archive manually using system tools."
+                )
         
         # Check what files were extracted directly to the school folder
         # print(f"Files in school folder after extraction: {[f for f in os.listdir(path) if f.endswith('.csv') or f.endswith('.sas7bdat')]}")
@@ -971,7 +1086,7 @@ class DownloadData:
     and run the full download workflow (or pieces of it) from another module.
     """
 
-    def __init__(self, config=None, base_dir=None, verbose=1):
+    def __init__(self, config=None, base_dir=None, verbose=1, auto_run=True):
         """Create a downloader.
 
         Args:
@@ -991,29 +1106,40 @@ class DownloadData:
                 raise FileNotFoundError(f"config.json file not found at {cfg_path}. Please create this file with the required configuration.")
             with open(cfg_path, "r") as f:
                 self.config = json.load(f)
-        # Initialize OUTPUT_DIR from config["output_dir"] (fallback to package dir)
+        # Initialize OUTPUT_DIR from config["path"] (fallback to package dir)
         global OUTPUT_DIR
         OUTPUT_DIR = self.config.get("path", self.base_dir)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        self.run_all()
+        if auto_run:
+            self.run_all()
         
     def run_all(self):
         """Run the full download workflow using the loaded configuration."""
         config = self.config
 
+        # Basic validation for keys required by multiple steps
         if "census_api_key" not in config:
             raise KeyError("census_api_key not found in config. Please add your Census API key to the configuration.")
-        key = config["census_api_key"]
-
         if "main_year" not in config:
             raise KeyError("main_year not found in config. Please add the main year to the configuration.")
         if "decennial_year" not in config:
             raise KeyError("decennial_year not found in config. Please add the decennial year to the configuration.")
-        main_year = config["main_year"]
-        decennial_year = config["decennial_year"]
 
-        # Extract state FIPS codes for the main run (handle ints/strings)
-        raw_geos = config["geos"]
+        # Delegate to per-step methods so they can also be called individually
+        self.pull_census_data()
+        self.pull_pums_data()
+        self.download_shapefiles()
+        self.pull_LODES()
+        self.download_ct_puma_crosswalk()
+        self.geocorr_files()
+        self.download_cbp_data()
+        self.download_school_data()
+        if self.verbose:
+            print("Downloading complete")
+
+    def _main_state_fips_and_abbr(self):
+        """Derive main state FIPS codes and abbreviations from config['geos']."""
+        raw_geos = self.config["geos"]
         main_fips = []
         for geo_value in raw_geos:
             geo_str = str(geo_value)
@@ -1022,57 +1148,125 @@ class DownloadData:
             main_fips.append(geo_str[:2])
         main_fips = list(set(main_fips))
         main_abbr = [abbr for abbr in fips_info(main_fips)["abbr"] if abbr is not None]
+        return main_fips, main_abbr
 
-        # Determine which states to use for PUMS
+    def pull_census_data(self):
+        """Run the census download step using this instance's configuration."""
+        config = self.config
+        v = self.verbose
+
+        if "census_api_key" not in config:
+            raise KeyError("census_api_key not found in config.")
+        if "main_year" not in config:
+            raise KeyError("main_year not found in config.")
+        if "decennial_year" not in config:
+            raise KeyError("decennial_year not found in config.")
+
+        key = config["census_api_key"]
+        year_ACS = config["main_year"]
+        year_DEC = config["decennial_year"]
+
+        main_fips, _ = self._main_state_fips_and_abbr()
+        state_fips = main_fips
+
+        ACS_table_codes = config["acs_required"]
+        if year_DEC == 2020:
+            DEC_table_codes = [config["dec_required"][1]]  # "P18" for 2020
+        else:
+            DEC_table_codes = [config["dec_required"][0]]  # "P43" otherwise
+
+        pull_census_data(
+            state_fips=state_fips,
+            year_ACS=year_ACS,
+            year_DEC=year_DEC,
+            ACS_table_codes=ACS_table_codes,
+            DEC_table_codes=DEC_table_codes,
+            key=key,
+            verbose=v,
+        )
+
+    def pull_pums_data(self):
+        """Run the PUMS download step using this instance's configuration."""
+        config = self.config
+        v = self.verbose
+
+        _, main_abbr = self._main_state_fips_and_abbr()
+
         if "use_pums" not in config or config["use_pums"] is None:
-            use_pums = main_abbr
+            states = main_abbr
         else:
             use_pums_fips = [str(v).zfill(2) for v in config["use_pums"]]
-            use_pums = [abbr for abbr in fips_info(use_pums_fips)["abbr"] if abbr is not None]
+            states = [abbr for abbr in fips_info(use_pums_fips)["abbr"] if abbr is not None]
 
-        # Determine auxiliary commute states (exclude ones already in main_fips)
+        if "main_year" not in config:
+            raise KeyError("main_year not found in config.")
+        year = config["main_year"]
+
+        pull_pums_data(states=states, year=year, verbose=v)
+
+    def download_shapefiles(self):
+        """Run the shapefile download step using this instance's configuration."""
+        config = self.config
+        v = self.verbose
+
+        main_fips, _ = self._main_state_fips_and_abbr()
+        state_fips = main_fips
+
+        if "main_year" not in config:
+            raise KeyError("main_year not found in config.")
+        year = config["main_year"]
+
+        download_shapefiles(state_fips, year, v)
+
+    def pull_LODES(self):
+        """Run the LODES download step using this instance's configuration."""
+        config = self.config
+        v = self.verbose
+
+        main_fips, main_abbr = self._main_state_fips_and_abbr()
+        states_main = main_abbr
+
         if "commute_states" not in config or config["commute_states"] is None:
-            aux_abbr = []
+            states_aux = []
         else:
             aux_states_fips = [str(v).zfill(2) for v in config["commute_states"]]
             aux_states_filtered = [state for state in aux_states_fips if state not in main_fips]
-            aux_abbr = [abbr for abbr in fips_info(aux_states_filtered)["abbr"] if abbr is not None]
+            states_aux = [abbr for abbr in fips_info(aux_states_filtered)["abbr"] if abbr is not None]
 
-        # Required tables
-        acs_required = config["acs_required"]
-        if decennial_year == 2020:
-            dec_required = [config["dec_required"][1]]  # "P18" for 2020
-        else:
-            dec_required = [config["dec_required"][0]]  # "P43" otherwise
+        if "main_year" not in config:
+            raise KeyError("main_year not found in config.")
+        year = config["main_year"]
 
-        # Run the existing functions
-        pull_census_data(
-            state_fips=main_fips,
-            year_ACS=main_year,
-            year_DEC=decennial_year,
-            ACS_table_codes=acs_required,
-            DEC_table_codes=dec_required,
-            key=key,
-            verbose=self.verbose
-        )
+        pull_LODES(states_main, states_aux, year, v)
 
-        pull_pums_data(states=use_pums, year=main_year, verbose=self.verbose)
+    def download_ct_puma_crosswalk(self):
+        """Run the CT→PUMA crosswalk download step using this instance's configuration."""
+        config = self.config
+        v = self.verbose
 
-        download_shapefiles(main_fips, main_year, self.verbose)
+        if "main_year" not in config:
+            raise KeyError("main_year not found in config.")
+        main_year = config["main_year"]
 
-        pull_LODES(main_abbr, aux_abbr, main_year, self.verbose)
-        
-        download_ct_puma_crosswalk(main_year, self.verbose)
-        # Copy geocore files from base_dir/geocore to path/geo folder
-        geocore_files(self.verbose)
-        
-        # Download employer size data from CBP
-        download_cbp_data(self.verbose)
-        
-        # Download school data
-        download_school_data(main_year, self.verbose)
-        if self.verbose:
-            print("Downloading complete")
+        download_ct_puma_crosswalk(main_year, v)
+
+    def download_cbp_data(self):
+        """Run the CBP download step using this instance's configuration."""
+        v = self.verbose
+        download_cbp_data(v)
+
+    def geocorr_files(self):
+        """Run the geocorr copy step using this instance's configuration."""
+        v = self.verbose
+        geocorr_files(v)
+
+    def download_school_data(self):
+        """Run only the school-data download step using current configuration."""
+        if "main_year" not in self.config:
+            raise KeyError("main_year not found in config.")
+        year = self.config["main_year"]
+        v = self.verbose
+        download_school_data(year, v)
 
     def census_metadata(self, refresh=False):
         """Return the combined ACS/Decennial name→label mapping.
@@ -1203,9 +1397,9 @@ class DownloadData:
                 ],
             },
             {
-                "function": "geocore_files",
+                "function": "geocorr_files",
                 "websites": [
-                    "(package-local) src/geopops/geocore/*.csv",
+                    "(package-local) src/geopops/geocorr/*.csv",
                 ],
                 "output_folder": os.path.join(OUTPUT_DIR, "geo"),
                 "files": [

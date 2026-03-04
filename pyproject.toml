@@ -19,6 +19,11 @@ dependencies = [
   "urllib3>=2.5.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "ipykernel",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
