@@ -576,7 +576,7 @@ def download_shapefiles(state_fips, year, verbose=1):
     Args:
         state_fips (list): List of state abbreviations
         year (str): The year of the shapefiles
-        verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+        verbose: If 1, print output. If 0, suppress output. Defaults to 1
         
     Returns:
         Outputs data files in the geo folder
