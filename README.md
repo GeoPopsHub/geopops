@@ -83,7 +83,7 @@ geopops.ForStarsim.GPNetwork()          # Returns a Starsim Network object
 geopops.ForStarsim.SubgroupTracking()   # Returns a Starsim Analyzer object for demographic or geographic subgroup tracking
 ```
 ## Tutorials
-See [tutorials/MIDAS](https://github.com/ACCIDDA/GeoPops/tree/main/tutorials/MIDAS) for more detailed usage in a Notebook tutorial. GeoPops is in development, and we welcome feedback! Please log any issues as you try it out.
+See [here](https://github.com/ACCIDDA/GeoPops/tree/main/tutorials/MIDAS) for more detailed usage in a Notebook tutorial. GeoPops is in development, and we welcome feedback! Please log any issues as you try it out.
 
 ## Support
 GeoPops development is a collaboration between the following institutions:
