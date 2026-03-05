@@ -86,7 +86,7 @@ geopops.ForStarsim.SubgroupTracking()   # Returns a Starsim Analyzer object for 
 See [tutorials/MIDAS](https://github.com/ACCIDDA/GeoPops/tree/main/tutorials/MIDAS) for more detailed usage in a Notebook tutorial. GeoPops is in development, and we welcome feedback! Please log any issues as you try it out.
 
 ## Support
-GeoPops development is a collaboration with the following institutions:
+GeoPops development is a collaboration between the following institutions:
 * [ACCIDDA](https://accidda.org/)
 * [Insight Net](https://insightnet.us/)
 * [Johns Hopkins University Center for Systems Science and Engineering](https://systems.jhu.edu/)
@@ -98,6 +98,13 @@ GeoPops development is a collaboration with the following institutions:
 ## Conferences
 
 ### Insight Net Annual Meeting 2026
+**Geopops workshop: An open-source, adaptable framework for agent-based modeling on synthetic populations**
+In this hands-on workshop, participants use GeoPops to test interventions in response to the mealses outbreak in South Carolina
+* Generate a population of Spartenburg county, SC
+* Geographically seed initial infections
+* Run an SEIR model on the population using Starsim
+* Test two quarantine strategies: 1) infected individual only; 2) infected individual and siblings
+* Track outcomes by age and Census Block Group
 
 ### MIDAS 2025
 **GeoPops demonstration: An open-source, adaptable framework for agent-based modeling on synthetic populations**
