@@ -355,13 +355,32 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
     
     for state_i in state_fips:
         if verbose:
-            print(f"Downloading Census data for {state_i} into census folder")
+            print(f"Downloading Census data for {state_i} into census folder - DownloadData.pull_census_data()")
         
+        # Process ACS table codes
+        # Note: no 2023 data for B09019/B09020/B09021
+        # so we need to use 2022 data for these tables if year_ACS is 2023
+    
+        # Effective vintage: use 2022 for B09019/B09020/B09021 when year_ACS is 2023 (no 2023 data)
+        missing_years = {2023, 2024}
+        FALLBACK_2022_CODES = {'B09019', 'B09020', 'B09021'}
+        def _effective_acs_year(code, year_ACS):
+            if year_ACS in missing_years and code in FALLBACK_2022_CODES:
+                print(f"Using 2022 data for {code} because 2023 and 2024 data are not available via Census API")
+                return 2022
+            return year_ACS
         # Process ACS table codes
         table_codes = pd.DataFrame({
             "table_codes": [f"group({code})" for code in ACS_table_codes],
-            "table_name": [f"ACSDT5Y{year_ACS}.{code}-Data" for code in ACS_table_codes]
-        })
+            "table_name": [f"ACSDT5Y{_effective_acs_year(code, year_ACS)}.{code}-Data" for code in ACS_table_codes],
+            "vintage": [_effective_acs_year(code, year_ACS) for code in ACS_table_codes],
+        })   
+    
+       
+        # table_codes = pd.DataFrame({
+        #     "table_codes": [f"group({code})" for code in ACS_table_codes],
+        #     "table_name": [f"ACSDT5Y{year_ACS}.{code}-Data" for code in ACS_table_codes]
+        # })
         
         for _, row in table_codes.iterrows():
             # print(f"Downloading {row['table_name']}")
@@ -369,7 +388,7 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
             # Make the API call and get the data
             data = get_census_data(
                 name="acs/acs5",
-                vintage=year_ACS,
+                vintage=row["vintage"],   # was: year_ACS
                 vars=[row["table_codes"]],
                 region="block group:*",
                 regionin=f"state:{state_i} county:*",
@@ -499,7 +518,7 @@ def pull_pums_data(states, year, verbose=1):
     for state_i in states:
         
         if verbose:
-            print(f"Downloading PUMS data for {state_i} into pums folder")
+            print(f"Downloading PUMS data for {state_i} into pums folder - DownloadData.pull_pums_data()")
         
         urls_list = [url for state, url in file_urls if state == state_i]
         
@@ -591,7 +610,7 @@ def download_shapefiles(state_fips, year, verbose=1):
     for state_i in state_fips:
         
         if verbose:
-            print(f"Downloading Shapefiles for {state_i} into geo folder")
+            print(f"Downloading Shapefiles for {state_i} into geo folder - DownloadData.download_shapefiles()")
         
         urls_list = [url for state, url in file_urls if state == state_i]
         
@@ -631,7 +650,7 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
     Notes: No LODES data for 2024 or 2025, so use 2023 data if year > 2023.
     """
     if verbose:
-        print("Downloading LODES data into work folder")
+        print("Downloading LODES data into work folder - DownloadData.pull_LODES()")
     # Determine version based on year
     version = "LODES8" if year >= 2020 else "LODES7"
     
@@ -762,7 +781,7 @@ def download_cbp_data(verbose=1):
         Outputs data files in the work folder
     """
     if verbose:
-        print("Downloading CBP data into work folder")
+        print("Downloading CBP data into work folder - DownloadData.download_cbp_data()")
     cbp_dir = os.path.join(OUTPUT_DIR, "work")
     os.makedirs(cbp_dir, exist_ok=True)
     
@@ -781,7 +800,7 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
         Outputs data files in the geo folder
     """
     if verbose:
-        print("Downloading Census Tract to PUMA crosswalk file into geo folder")
+        print("Downloading Census Tract to PUMA crosswalk file into geo folder - DownloadData.download_ct_puma_crosswalk()")
     geo_dir = os.path.join(OUTPUT_DIR, "geo")
     os.makedirs(geo_dir, exist_ok=True)
     
@@ -843,7 +862,7 @@ def geocorr_files(verbose=1):
         Outputs data files in the geo folder
     """
     if verbose:
-        print("Copying geocorr files into geo folder")
+        print("Copying geocorr files into geo folder - DownloadData.geocorr_files()")
 
     # Load main_year from config to decide which geocorr files to copy
     config_path = os.path.join(BASE_DIR, "config.json")
@@ -911,7 +930,7 @@ def download_school_data(main_year, verbose=1):
     os.makedirs(school_dir, exist_ok=True)
     
     if verbose:
-        print(f"Downloading school data into school folder")
+        print(f"Downloading school data into school folder - DownloadData.download_school_data()")
     
     # Download school location data
     # https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_2021.zip
@@ -936,7 +955,7 @@ def download_school_data(main_year, verbose=1):
     # Move files from extracted folder to main school folder
     extracted_folder = os.path.join(school_dir, f"EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}")
     files_to_move = [f"EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}.xlsx",
-                    "Shapefiles_SCH"]
+                    "Shapefiles_SCH", "Shapefile_SCH"] # if year > 2019, uses Shapefile_SCH (singular) folder instead of Shapefiles_SCH (plural) 
 
     for item_to_move in files_to_move:
         source_path = os.path.join(extracted_folder, item_to_move)
@@ -951,6 +970,17 @@ def download_school_data(main_year, verbose=1):
             os.rename(source_path, dest_path)
         # else:
         #     print(f"Item {item_to_move} not found")
+
+    # Normalize school shapefile folder name to 'Shapefiles_SCH'
+    
+    singular = os.path.join(school_dir, "Shapefile_SCH")
+    plural   = os.path.join(school_dir, "Shapefiles_SCH")
+
+    if os.path.isdir(singular):
+        # If a plural folder already exists, remove or merge as you prefer; simplest is remove it first
+        if os.path.isdir(plural):
+            shutil.rmtree(plural)
+        os.rename(singular, plural)
 
     # Delete files (zip file and empty extracted folder)
     files_to_delete = [
@@ -1011,7 +1041,7 @@ def download_school_data(main_year, verbose=1):
         with open(zip_path, 'wb') as f:
             f.write(response.content)
         
-        # Extract the zip file
+        # Extract the outer zip file
         # This will cause an error "NotImplementedError" if the interpreter used to build the environment 
         # does not have full LZMA support
         try:
@@ -1050,7 +1080,55 @@ def download_school_data(main_year, verbose=1):
                     "On Unix-like systems, install a Python build with LZMA support "
                     "or extract the archive manually using system tools."
                 )
-        
+
+        # Handle nested CSV and SAS ZIPs created by NCES (e.g. *_CSV.zip, *_SAS.zip)
+        for nested_name in os.listdir(school_dir):
+            if not nested_name.lower().endswith(".zip"):
+                continue
+
+            nested_path = os.path.join(school_dir, nested_name)
+            upper_name = nested_name.upper()
+
+            # CSV archives: extract to get the actual .csv, then delete the inner zip
+            if upper_name.endswith("_CSV.ZIP"):
+                try:
+                    with zipfile.ZipFile(nested_path, "r") as nested_zip:
+                        nested_zip.extractall(school_dir)
+                except NotImplementedError:
+                    system = platform.system()
+                    if system == "Darwin":
+                        subprocess.run(
+                            ["unzip", "-o", nested_name],
+                            cwd=school_dir,
+                            check=True,
+                        )
+                    elif system == "Windows":
+                        src = nested_path
+                        dst = school_dir
+                        ps_cmd = (
+                            f"Expand-Archive -LiteralPath {shlex.quote(src)} "
+                            f"-DestinationPath {shlex.quote(dst)} -Force"
+                        )
+                        subprocess.run(
+                            ["powershell", "-NoProfile", "-Command", ps_cmd],
+                            check=True,
+                        )
+                    else:
+                        raise RuntimeError(
+                            "Nested CSV ZIP uses a compression method not supported by this Python. "
+                            "On Unix-like systems, install a Python build with LZMA support "
+                            "or extract the archive manually using system tools."
+                        )
+
+                # Remove the nested CSV zip after extraction
+                if os.path.exists(nested_path):
+                    os.remove(nested_path)
+
+            # SAS archives: we don't need SAS files, just delete the zip
+            elif upper_name.endswith("_SAS.ZIP"):
+                if os.path.exists(nested_path):
+                    os.remove(nested_path)
+
         # Check what files were extracted directly to the school folder
         # print(f"Files in school folder after extraction: {[f for f in os.listdir(path) if f.endswith('.csv') or f.endswith('.sas7bdat')]}")
         
@@ -1135,7 +1213,7 @@ class DownloadData:
         self.download_cbp_data()
         self.download_school_data()
         if self.verbose:
-            print("Downloading complete")
+            print("All DownloadData() steps complete")
 
     def _main_state_fips_and_abbr(self):
         """Derive main state FIPS codes and abbreviations from config['geos']."""

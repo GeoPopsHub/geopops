@@ -86,7 +86,7 @@ def read_pums(prefix, dtypes):
     with os.scandir(os.path.join(OUTPUT_DIR, "pums")) as d:
         files = [f for f in d if f.is_file() and f.name.startswith(prefix)]
     #   dfs =[pd.read_csv(f,usecols=list(dtypes.keys()),dtype=dtypes) for f in files]
-    dfs = [pd.read_csv(f,usecols=list(dtypes.keys()),dtype=dtypes, keep_default_na=False) for f in files]
+    dfs = [pd.read_csv(f,usecols=list(dtypes.keys()),dtype=dtypes, keep_default_na=False, encoding='latin-1') for f in files]
     return pd.concat(dfs)
 
 ## read geography shapefiles
@@ -157,7 +157,13 @@ def read_sch_data(geos=None, main_year=None):
         'G_9_OFFERED', 'G_10_OFFERED', 'G_11_OFFERED', 'G_12_OFFERED',
         'GSLO', 'GSHI', 'LEVEL', 'TEACHERS', 'STUDENTS']
     ## prefer columns based on join order
-    schools = sch_geo.join(sch_dir, rsuffix='_').join(sch_staff, rsuffix='_').join(sch_mem, rsuffix='_').loc[:,scols]
+    # Use unique suffixes per join to avoid duplicate-column MergeError on newer pandas
+    schools = (
+        sch_geo.join(sch_dir, rsuffix="_dir")
+        .join(sch_staff, rsuffix="_staff")
+        .join(sch_mem, rsuffix="_mem")
+        .loc[:, scols]
+    )
     if geos is not None:
         geo_mask = np.any([schools['CNTY'].str.startswith(g) for g in [s[0:5] for s in geos]], axis=0)
     else:
@@ -478,14 +484,14 @@ def read_hsamp(ptotals, ADJINC, inc_cats, inc_cols):
 
 
 def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, ind_codes, occ_codes, more_summary_cols):
-
-    print("Reading PUMS data")
+    print("Generating PUMS samples - ProcessData.generate_samples()")
+    # print(" - Reading PUMS data...")
     psamp, ptotals = read_psamp(LODES_cutoff, ind_codes, occ_codes)
     hsamp = read_hsamp(ptotals, ADJINC, inc_cats, inc_cols)
 
     ## csv of household samples
     ## these will be recombined to generate the synth pop
-    print("Writing samples")
+    # print(" - Writing samples...")
     hsamp[sample_columns].to_csv(os.path.join(PROCESSED_DIR,'census_samples.csv'))
 
     ## separate file with PUMA and other geo data for each record in census samples
@@ -496,13 +502,22 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
     ##  puma to cbsa, rename to *puma_to_cbsa*.*
     ##  puma to urban-rural portion, rename to *puma_urban_rural*.*
     ## put into folder "geo"
-    print("Reading geo crosswalks")
+    # print(" - Reading geo crosswalks...")
 
     samp_geo = hsamp[['PUMA','ST']].reset_index().copy(deep=True)
     samp_geo['st_puma'] = samp_geo['ST'] + samp_geo['PUMA'].str.zfill(5)
     ## simpler: place each puma in its primary cbsa
     file = glob(os.path.join(OUTPUT_DIR, "geo","*puma_to_cbsa*.*"))[0]
-    puma_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","cbsa","afact"])
+    
+    #### puma_to_cbsa ####
+    # puma_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","cbsa","afact"])
+    candidate_cols = {"state", "puma12", "puma22", "cbsa", "cbsa20", "afact"}
+    puma_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1') 
+    col_puma = puma_to_cbsa.columns[1] # rename "puma12" and "puma22" to "puma"
+    puma_to_cbsa.rename(columns={col_puma: "puma12"}, inplace=True)
+    col_cbsa = puma_to_cbsa.columns[2] # rename "cbsa20" to "cbsa"
+    puma_to_cbsa.rename(columns={col_cbsa: "cbsa"}, inplace=True)
+    # now use only "puma" and "cbsa" 
     puma_to_cbsa['st_puma'] = puma_to_cbsa['state'] + puma_to_cbsa['puma12'].str.zfill(5)
     puma_to_cbsa.loc[puma_to_cbsa['cbsa']==" ", 'cbsa'] = "none"
     puma_to_cbsa = puma_to_cbsa.groupby('st_puma',group_keys=True).apply(lambda g: g[g['afact'] == g['afact'].max()], include_groups=False).reset_index()
@@ -511,14 +526,26 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
     samp_geo = samp_geo.merge(puma_to_cbsa, how='left', on='st_puma')
     ## some pumas span counties; associate each with its primary county
     ## -- we're only looking up samples by county when it contains multiple pumas
+    
+    #### puma_to_county ####
     file = glob(os.path.join(OUTPUT_DIR, "geo","*puma_to_county*.*"))[0]
-    puma_to_county = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","county","afact"])
+    # puma_to_county = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","county","afact"])
+    candidate_cols = {"state", "puma12", "puma22", "county", "afact"}
+    puma_to_county = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1')
+    col_puma = puma_to_county.columns[1] # rename "puma12" and "puma22" to "puma"
+    puma_to_county.rename(columns={col_puma: "puma12"}, inplace=True)
     puma_to_county['st_puma'] = puma_to_county['state'] + puma_to_county['puma12'].str.zfill(5)
     puma_to_county = puma_to_county.groupby('st_puma',group_keys=True).apply(lambda g: g[g['afact'] == g['afact'].max()], include_groups=False).reset_index()
     puma_to_county = puma_to_county[['st_puma','county']]
     samp_geo = samp_geo.merge(puma_to_county, how='left', on='st_puma')
     file = glob(os.path.join(OUTPUT_DIR, "geo","*puma_urban_rural*.*"))[0]
-    puma_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","ur","afact"])
+    
+    #### puma_urban_rural ####
+    # puma_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","ur","afact"])
+    candidate_cols = {"state", "puma12", "puma22", "ur", "afact"}
+    puma_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1')
+    col_puma = puma_ur.columns[1] # rename "puma12" and "puma22" to "puma"
+    puma_ur.rename(columns={col_puma: "puma12"}, inplace=True)
     puma_ur['st_puma'] = puma_ur['state'] + puma_ur['puma12'].str.zfill(5)
     puma_ur = puma_ur.pivot(index='st_puma', columns='ur', values='afact').fillna(0)
     puma_ur.reset_index(inplace=True)
@@ -526,7 +553,7 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
     samp_geo.set_index('SERIALNO', inplace=True, verify_integrity=True)
     samp_geo.to_csv(os.path.join(PROCESSED_DIR,'samp_geo.csv'))
 
-    print("Writing sample summaries")
+    # print(" - Writing sample summaries...")
     ## summary of household PUMS samples
     ## will be used to look up synth pop totals, after sample households are selected
     h_summcols = ['NP','HINCP','NOC','NPF','NRC','PWGTP','WAGP','PINCP','PERNP',
@@ -567,6 +594,7 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
     p_summary = p_summary.merge(puma_to_cbsa, how='left', on='st_puma').merge(puma_to_county, how='left', on='st_puma')
     p_summary['cbsa'] = p_summary['cbsa'].fillna("none")
 
+    # print(" - Generating samples complete")
     return p_summary
 
 
@@ -582,9 +610,11 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
 ##
 ## put into folder "geo"
 def read_geo_xwalk(cbg_index):
-
+    
     file = glob(os.path.join(OUTPUT_DIR, "geo","*Census_Tract_to*PUMA*.*"))[0]
     tpum = pd.read_csv(file,dtype=str)
+    first_col = tpum.columns[0]
+    tpum = tpum.rename(columns={first_col: "STATEFP"})
     tpum['st_puma'] = tpum['STATEFP']+tpum['PUMA5CE'].str.zfill(5)
     tpum['tract'] = tpum['STATEFP']+tpum['COUNTYFP']+tpum['TRACTCE']
     ## note, population 0 cbgs are not in geocorr
@@ -592,22 +622,44 @@ def read_geo_xwalk(cbg_index):
                             'tract':cbg_index.map(lambda x: x[0:-1]),
                             'county':cbg_index.map(lambda x: x[0:5])})
     cbg_geo = cbg_geo.merge(tpum, how='left', on='tract').set_index('Geo', verify_integrity=True)
+    
+    cbg_geo.to_csv(os.path.join(PROCESSED_DIR,'cbg_geo_test.csv'))
+    
+    
+    #### cbg_to_cbsa ####
     file = glob(os.path.join(OUTPUT_DIR, "geo","*cbg_to_cbsa*.*"))[0]
-    cbg_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["county","tract","bg","cbsa"])
+    # cbg_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["county","tract","bg","cbsa"])
+    candidate_cols = {"county", "tract", "bg", "blockgroup", "cbsa", "cbsa20"} #Read only the columns that might appear
+    cbg_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1') # include any of these names
+    col_bg = cbg_to_cbsa.columns[2] # should be "bg" or "blockgroup"
+    cbg_to_cbsa.rename(columns={col_bg: "bg"}, inplace=True)
+    col_cbsa = cbg_to_cbsa.columns[3] # should be "cbsa" or "cbsa20"
+    cbg_to_cbsa.rename(columns={col_cbsa: "cbsa"}, inplace=True)
     cbg_to_cbsa['Geo'] = cbg_to_cbsa['county'] + \
         cbg_to_cbsa['tract'].map(lambda x: x[0:4]) + cbg_to_cbsa['tract'].map(lambda x: x[5:]) + \
         cbg_to_cbsa['bg']
     cbg_to_cbsa.set_index('Geo', inplace=True, verify_integrity=True)
+    # cbg_to_cbsa.to_csv(os.path.join(PROCESSED_DIR,'cbg_to_cbsa_test.csv'))
+    
+    #### cbg_urban_rural ####
     file = glob(os.path.join(OUTPUT_DIR, "geo","*cbg_urban_rural*.*"))[0]
-    cbg_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["county","tract","bg","ur","pop10","afact"])
+    # cbg_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["county","tract","bg","ur","pop10","afact"])
+    candidate_cols = {"county", "tract", "bg", "blockgroup", "ur", "pop10", "pop20", "afact"} #Read only the columns that might appear
+    cbg_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1') # include any of these names
+    col_bg = cbg_ur.columns[2]
+    cbg_ur.rename(columns={col_bg: "bg"}, inplace=True)
+    col_pop = cbg_ur.columns[4]
+    cbg_ur.rename(columns={col_pop: "pop10"}, inplace=True)
     cbg_ur['Geo'] = cbg_ur['county'] + \
         cbg_ur['tract'].map(lambda x: x[0:4]) + cbg_ur['tract'].map(lambda x: x[5:]) + \
         cbg_ur['bg']
     cbg_ur = cbg_ur[['Geo','ur','afact']]
+    # cbg_ur.to_csv(os.path.join(PROCESSED_DIR,'cbg_ur_test.csv'))
     cbg_ur = cbg_ur.pivot(index='Geo', columns='ur', values='afact').fillna(0)
+    cbg_ur.to_csv(os.path.join(PROCESSED_DIR,'cbg_ur_test.csv'))
     cbg_geo = cbg_geo.join(cbg_to_cbsa['cbsa']).join(cbg_ur)
     cbg_geo.loc[cbg_geo['cbsa']==" ", 'cbsa'] = "none"
-
+    # cbg_geo.to_csv(os.path.join(PROCESSED_DIR,'cbg_geo_test.csv'))
     return cbg_geo
 
 
@@ -617,7 +669,7 @@ def read_geo_xwalk(cbg_index):
 ## group quarters by age groups, based on ACS
 def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_codes):
 
-    print("Generating group quarters data")
+    print("Generating group quarters data - ProcessData.generate_gq()")
 
     # everyone, by age group
     B01001 = read_acs('B01001',geos)
@@ -792,10 +844,12 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
 
     df_gq = df_gq.loc[keep_rows, keep_cols].copy(deep=True)
     df_gq.round(6).to_csv(os.path.join(PROCESSED_DIR,'group_quarters.csv'))
+    # print(" - Generating group quarters complete")
     return df_gq
 
 
 def read_ind_df(geos, ind_codes):
+   
     ## industries
     C24030 = read_acs("C24030",geos)
     ## civilian vs military workforce
@@ -818,11 +872,12 @@ def read_ind_df(geos, ind_codes):
     ind_df = C24030[["C24030:"]].copy(deep=True)
     for k in ind_codes:
         ind_df = ind_df.join(C24030['C24030:All:'+ind_codes[k][1]].rename('C24030:'+k))
-
+   
     return ind_df
 
 
 def read_occ_df(geos, occ_codes):
+   
     ## occupations
     C24010 = read_acs("C24010",geos)
     ## civilian vs military workforce
@@ -848,7 +903,7 @@ def read_occ_df(geos, occ_codes):
     occ_df = C24010[["C24010:"]].copy(deep=True)
     for k in occ_codes:
         occ_df = occ_df.join(C24010['C24010:All:'+occ_codes[k][1]].rename('C24010:'+k))
-
+    
     return occ_df
 
 
@@ -890,7 +945,7 @@ def read_occ_df(geos, occ_codes):
 #     # 15.	'With only nonrelatives present']
 
 def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_cols, ind_codes, occ_codes):
-    print("Reading Census data")
+    print("Generating Census targets - ProcessData.generate_targets()")
 
     ##
     ## a couple of cbgs in the ACS aren't in the tract-to-puma xwalk
@@ -1017,7 +1072,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     occ_df = read_occ_df(geos,occ_codes)
     ## adjust ACS industry and occ counts using estimated GQ counts
     ## (industry and occupation expected to be different for gq vs households)
-    print("Estimating household employment counts")
+    # print(" - Estimating household employment counts...")
 
     ind_civ_gq = gq_stats[['ind_'+k+'_p|ninst1864civ' for k in ind_codes.keys()]].copy(deep=True) \
         .apply(lambda s: s * gq_stats['p_18_64_noninst_civil'] * gq_stats['group quarters:18 to 64']) \
@@ -1091,6 +1146,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
 
     ## initial starting point for hh workers by ind/occ = ACS sums * hh workers / total workers
     df_bounds["_p_hh"] = (df_bounds["hh_workers"] / df_bounds["total_workers"]).fillna(0.0)
+    df_bounds.to_csv(os.path.join(PROCESSED_DIR,'df_bounds_test.csv'))
     ind_df = ind_df.join(df_bounds[["_p_hh"]])
     occ_df = occ_df.join(df_bounds[["_p_hh"]])
 
@@ -1151,6 +1207,17 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
         occ_civ_gq.loc[i,:] = new_m[1,:]
         occ_mil_gq.loc[i,:] = new_m[2,:]
         
+        
+    ## check for NAN
+    ind_hh.to_csv(os.path.join(PROCESSED_DIR,'ind_hh_test.csv'))
+    ind_civ_gq.to_csv(os.path.join(PROCESSED_DIR,'ind_civ_gq_test.csv'))
+    ind_mil_gq.to_csv(os.path.join(PROCESSED_DIR,'ind_mil_gq_test.csv'))
+    occ_hh.to_csv(os.path.join(PROCESSED_DIR,'occ_hh_test.csv'))
+    occ_civ_gq.to_csv(os.path.join(PROCESSED_DIR,'occ_civ_gq_test.csv'))
+    occ_mil_gq.to_csv(os.path.join(PROCESSED_DIR,'occ_mil_gq_test.csv'))
+    
+    
+        
     ## round to integer (preserve row sums)
     ind_hh = ind_hh.apply(lrRound,axis=1)
     ind_civ_gq = ind_civ_gq.apply(lrRound,axis=1)
@@ -1158,6 +1225,8 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     occ_hh = occ_hh.apply(lrRound,axis=1)
     occ_civ_gq = occ_civ_gq.apply(lrRound,axis=1)
     occ_mil_gq = occ_mil_gq.apply(lrRound,axis=1)
+    
+    
 
     ## save gq employment counts for synth pop construction
     ind_civ_gq.join(occ_civ_gq).to_csv(os.path.join(PROCESSED_DIR,'gq_civilian_workers.csv'))
@@ -1187,7 +1256,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     for k,v in zip(inc_cats,inc_cols):
         acs_tables['B19001:'+k] = acs_tables[['B19001:'+x for x in v]].sum(axis=1)
 
-    print("Writing Census targets")
+    # print("Writing Census targets")
     ## csv of household counts by geography
     B11012.loc[has_puma_idx,'B11012:'].to_csv(os.path.join(PROCESSED_DIR,'hh_counts.csv'))
     ## drop cbgs with less than 20 hh
@@ -1197,7 +1266,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     acs_tables.loc[keep_cbg_idx,target_columns].to_csv(os.path.join(PROCESSED_DIR,'acs_targets.csv'))
     ## csv of cbg geo data
     geo_xwalk.loc[keep_cbg_idx,:].to_csv(os.path.join(PROCESSED_DIR,'cbg_geo.csv'))
-
+    # print(" - Generating Census targets complete")
     return None
 
 
@@ -1237,7 +1306,7 @@ def p_or_frac(ser):
 
 ## calculates origin-destination commute matrix and related info for geos in synth pop
 def read_origin_destination(geos, commute_states):
-
+    # print("Reading origin-destination commute data")
     od = read_work_commute()
 
     if geos is not None:
@@ -1279,6 +1348,7 @@ def read_origin_destination(geos, commute_states):
         .loc[:,'S000'] \
         .unstack().fillna(0)
 
+    # print(" - Reading origin-destination commute data complete")
     return (od_matrix, n_commuting_in, n_commuting_out)
 
 ## estimate workers by industry x destination from WAC data
@@ -1343,9 +1413,10 @@ def read_industry_by_dest(geos, ind_codes, ind_keys):
 ## write origin-destination, origin-industry, and industry-destination commute data
 ## to use in generating commutes by industry
 def calc_commute_marginals(geos,ind_codes,ind_keys,commute_states):
-    print("Reading commute data")
+    print("Generating commute marginals - ProcessData.calc_commute_marginals()")
+    # print(" - Origin-destination commute data...")
     od_matrix, n_commuting_in, n_commuting_out = read_origin_destination(geos, commute_states)
-
+    # print(" - Origin-industry commute data...")
     ind_df = read_ind_df(geos, ind_codes)
     ind_df = ind_df.astype(float).sort_index()
 
@@ -1374,7 +1445,7 @@ def calc_commute_marginals(geos,ind_codes,ind_keys,commute_states):
 
     ## this index has all the work locations in the synth pop
     dest_index = od_matrix.columns
-
+    # print(" - Industry-destination commute data...")
     ## estimate workers by industry x destination from WAC data
     wac_by_dest = read_industry_by_dest(geos, ind_codes, ind_keys)
 
@@ -1386,11 +1457,11 @@ def calc_commute_marginals(geos,ind_codes,ind_keys,commute_states):
     wac_by_dest.loc["outside",ind_keys] = n_commuting_out * p_by_ind
 
     ## save for next step
-    print("Writing commute-by-industry sums")
+    
     od_matrix.to_csv(os.path.join(PROCESSED_DIR,"work_od_prop.csv"),float_format="%.8g")
     ind_df.round(2).to_csv(os.path.join(PROCESSED_DIR,"work_io_sums.csv"))
     wac_by_dest.round(2).to_csv(os.path.join(PROCESSED_DIR,"work_id_est_sums.csv"))
-
+    # print(" - Generating commute marginals complete")
     return None
 
 ## employer size data from:
@@ -1412,8 +1483,7 @@ def calc_commute_marginals(geos,ind_codes,ind_keys,commute_states):
 #N1000_4         N       Number of Establishments: Employment Size Class:
 #                                5,000 or More Employees
 def generate_work_sizes():
-    print("Generating employer sizes")
-
+    print("Generating employer sizes - ProcessData.generate_work_sizes()")
     work_counties = pd.read_csv(os.path.join(PROCESSED_DIR,'work_sizes.csv'),dtype=str)["county"].values
     cbp = read_cbp(work_counties)
     ##
@@ -1434,6 +1504,7 @@ def generate_work_sizes():
     cbp['sigma_ln'] = np.sqrt(imp_v)
 
     cbp.to_csv(os.path.join(PROCESSED_DIR,'work_sizes.csv'))
+    # print(" - Generating employer sizes complete")
     return None
 
 
@@ -1456,12 +1527,12 @@ def generate_work_sizes():
 
 ## TODO: add private schools https://nces.ed.gov/surveys/pss/index.asp
 def generate_schools(geos, main_year):
-    print("Reading school data")
+    print("Generating school data - ProcessData.generate_schools()")
     schools = read_sch_data(geos, main_year)
     schools.to_csv(os.path.join(PROCESSED_DIR,'schools.csv'))
 
     ## school geo data
-    fname = glob(os.path.join(OUTPUT_DIR, "school","Shape*","EDGE_GEOCODE*.shp"))[0]
+    fname = glob(os.path.join(OUTPUT_DIR, "school","Shape*","EDGE_GEOCODE*.shp"))[0] # shapefile didn't unzip
     sch_lon_lat_pts = gpd.read_file(fname).set_index('NCESSCH')['geometry']
     schools = pd.merge(sch_lon_lat_pts, schools, left_index=True, right_index=True)
     ## location in projection UTM 18N coords
@@ -1473,7 +1544,7 @@ def generate_schools(geos, main_year):
     ## need tl####_??_bg.zip where ?? is the FIPS code for each state in the synth area
     ##
     ## put in directory "geo"
-    print("Calculating school distances")
+    # print(" - Calculating school distances...")
 
     cbg_geo = read_cbg_geo(geos)
 
@@ -1499,7 +1570,7 @@ def generate_schools(geos, main_year):
     ## assume kindergartens also offer preschool
     ## (we haven't generated private preschools and we have to send the preschoolers somewhere)
     #shutil.copy(os.path.join('processed','cbg_sch_KG.csv'), os.path.join('processed','cbg_sch_PK.csv'))
-
+    # print(" - Processing school data complete")
     return None
 
 
@@ -1509,7 +1580,7 @@ class ProcessData:
     Mirrors the pattern used by `Downloader` so it can be imported and run from other code.
     """
 
-    def __init__(self, config_dict=None, base_dir=None):
+    def __init__(self, config_dict=None, base_dir=None, auto_run=True):
         """Create a census runner.
 
         Args:
@@ -1517,7 +1588,7 @@ class ProcessData:
             base_dir: Optional base dir to use for relative paths. Defaults to this file's directory.
         """
         self.base_dir = base_dir if base_dir is not None else BASE_DIR
-        
+
         if config_dict is not None:
             self.config = config_dict
         else:
@@ -1532,81 +1603,96 @@ class ProcessData:
         config = self.config
         OUTPUT_DIR = self.config.get("path", self.base_dir)
         PROCESSED_DIR = os.path.join(OUTPUT_DIR, "processed")
-        
-        self.run_all()
 
-    def run_all(self):
-        ## industries and occupations to use in the synth pop
-        ## each associated with codes from PUMS and column names from processed census data
-        ind_codes = {'AGR_EXT':(["11", "21"],'Agriculture, forestry, fishing and hunting, and mining:'),
-        'CON':(["23"],'Construction'),
-        'MFG':(["31", "32", "33", "3M"],'Manufacturing'),
-        'WHL':(["42"],'Wholesale trade'),
-        'RET':(["44", "45", "4M"],'Retail trade'),
-        'TRN_UTL':(["48", "49", "22"],'Transportation and warehousing, and utilities:'),
-        'INF':(["51"],'Information'),
-        'FIN':(["52", "53"],'Finance and insurance, and real estate, and rental and leasing:'),
-        'PRF':(["54", "55", "56"],'Professional, scientific, and management, and administrative, and waste management services:'),
-        'EDU':(["61"],'Educational services, and health care and social assistance:Educational services'),
-        'MED':(["62"],'Educational services, and health care and social assistance:Health care and social assistance'),
-        'ENT_art':(["71"],'Arts, entertainment, and recreation, and accommodation and food services:Arts, entertainment, and recreation'),
-        'ENT_food':(["72"],'Arts, entertainment, and recreation, and accommodation and food services:Accommodation and food services'),
-        'SRV':(["81"],'Other services, except public administration'),
-        'ADM_MIL':(["92"],'ADM_MIL')}
+        # Initialize parameters derived from config
+        self._init_parameters()
 
-        occ_codes = {'MBSA':(["11","13","15","17","19","21","23","27"],'MBSA'),
-        'EDU':(["25"],'EDU'),
-        'MED':(["29"],'MED'),
-        'HLS':(["31"],'Service occupations:Healthcare support occupations'),
-        'PRT':(["33"],'Service occupations:Protective service occupations:'),
-        'EAT':(["35"],'Service occupations:Food preparation and serving related occupations'),
-        'CLN':(["37"],'Service occupations:Building and grounds cleaning and maintenance occupations'),
-        'PRS':(["39"],'Service occupations:Personal care and service occupations'),
-        'SAL':(["41"],'Sales and office occupations:Sales and related occupations'),
-        'OFF':(["43"],'Sales and office occupations:Office and administrative support occupations'),
-        'FFF_RPR':(["45","47","49"],'Natural resources, construction, and maintenance occupations:'),
-        'PRD_TRN':(["51","53"],'Production, transportation, and material moving occupations:'),
-        'MIL':(["55"],'MIL')}
+        if auto_run:
+            self.run_all()
 
-        ## default income categories
-        inc_cats_def = ['q1_1', 'q1_2', 'q1_3', 'q2', 'q3', 'q4', 'q5']
-        inc_cols_def = [['Less than $10,000'],
-                        ['$10,000 to $14,999', '$15,000 to $19,999', '$20,000 to $24,999'],
-                        ['$25,000 to $29,999', '$30,000 to $34,999', '$35,000 to $39,999'],
-                        ['$40,000 to $44,999', '$45,000 to $49,999', '$50,000 to $59,999', '$60,000 to $74,999'],
-                        ['$75,000 to $99,999', '$100,000 to $124,999'],
-                        ['$125,000 to $149,999', '$150,000 to $199,999'],
-                        ['$200,000 or more']]
-
+    def _init_parameters(self):
+        """Compute and cache configuration-derived parameters used across steps."""
         d = self.config
 
-        ## read states/counties to include
+        # Industries and occupations to use in the synth pop
+        # each associated with codes from PUMS and column names from processed census data
+        self.ind_codes = {
+            'AGR_EXT': (["11", "21"], 'Agriculture, forestry, fishing and hunting, and mining:'),
+            'CON': (["23"], 'Construction'),
+            'MFG': (["31", "32", "33", "3M"], 'Manufacturing'),
+            'WHL': (["42"], 'Wholesale trade'),
+            'RET': (["44", "45", "4M"], 'Retail trade'),
+            'TRN_UTL': (["48", "49", "22"], 'Transportation and warehousing, and utilities:'),
+            'INF': (["51"], 'Information'),
+            'FIN': (["52", "53"], 'Finance and insurance, and real estate, and rental and leasing:'),
+            'PRF': (["54", "55", "56"], 'Professional, scientific, and management, and administrative, and waste management services:'),
+            'EDU': (["61"], 'Educational services, and health care and social assistance:Educational services'),
+            'MED': (["62"], 'Educational services, and health care and social assistance:Health care and social assistance'),
+            'ENT_art': (["71"], 'Arts, entertainment, and recreation, and accommodation and food services:Arts, entertainment, and recreation'),
+            'ENT_food': (["72"], 'Arts, entertainment, and recreation, and accommodation and food services:Accommodation and food services'),
+            'SRV': (["81"], 'Other services, except public administration'),
+            'ADM_MIL': (["92"], 'ADM_MIL'),
+        }
+
+        self.occ_codes = {
+            'MBSA': (["11", "13", "15", "17", "19", "21", "23", "27"], 'MBSA'),
+            'EDU': (["25"], 'EDU'),
+            'MED': (["29"], 'MED'),
+            'HLS': (["31"], 'Service occupations:Healthcare support occupations'),
+            'PRT': (["33"], 'Service occupations:Protective service occupations:'),
+            'EAT': (["35"], 'Service occupations:Food preparation and serving related occupations'),
+            'CLN': (["37"], 'Service occupations:Building and grounds cleaning and maintenance occupations'),
+            'PRS': (["39"], 'Service occupations:Personal care and service occupations'),
+            'SAL': (["41"], 'Sales and office occupations:Sales and related occupations'),
+            'OFF': (["43"], 'Sales and office occupations:Office and administrative support occupations'),
+            'FFF_RPR': (["45", "47", "49"], 'Natural resources, construction, and maintenance occupations:'),
+            'PRD_TRN': (["51", "53"], 'Production, transportation, and material moving occupations:'),
+            'MIL': (["55"], 'MIL'),
+        }
+
+        # Default income categories
+        self.inc_cats_def = ['q1_1', 'q1_2', 'q1_3', 'q2', 'q3', 'q4', 'q5']
+        self.inc_cols_def = [
+            ['Less than $10,000'],
+            ['$10,000 to $14,999', '$15,000 to $19,999', '$20,000 to $24,999'],
+            ['$25,000 to $29,999', '$30,000 to $34,999', '$35,000 to $39,999'],
+            ['$40,000 to $44,999', '$45,000 to $49,999', '$50,000 to $59,999', '$60,000 to $74,999'],
+            ['$75,000 to $99,999', '$100,000 to $124,999'],
+            ['$125,000 to $149,999', '$150,000 to $199,999'],
+            ['$200,000 or more'],
+        ]
+
+        # Geos and commute states
         geos = d.get("geos", None)
         if geos is not None:
             geos = [str(x) for x in geos]
         commute_states = d.get("commute_states", None)
         if commute_states is not None:
             commute_states = [str(x).zfill(2) for x in commute_states]
-        main_year = d.get("main_year", None)
 
-        ## read ADJINC
-        ADJINC = d.get("inc_adj",1.010145)
-        ## read income categories
-        inc_cats = d.get("inc_cats",inc_cats_def)
-        inc_cols = d.get("inc_cols",inc_cols_def)
-        LODES_cutoff = d.get("LODES_annual_income_boundary",40000)
+        self.geos = geos
+        self.commute_states = commute_states
+        self.main_year = d.get("main_year", None)
 
-        ## additional individual (boolean) traits generated in read_psamp() to include in p_samples.csv summary
-        more_summary_cols = d.get("additional_traits",
-                                  ['sch_public','sch_private','female','race_black_alone','white_non_hispanic','hispanic'])
+        # ADJINC and income categories
+        self.ADJINC = d.get("inc_adj", 1.010145)
+        self.inc_cats = d.get("inc_cats", self.inc_cats_def)
+        self.inc_cols = d.get("inc_cols", self.inc_cols_def)
+        self.LODES_cutoff = d.get("LODES_annual_income_boundary", 40000)
+
+        # Additional traits to include in p_samples summary
+        self.more_summary_cols = d.get(
+            "additional_traits",
+            ['sch_public', 'sch_private', 'female', 'race_black_alone', 'white_non_hispanic', 'hispanic'],
+        )
 
         # Make a list of column names for B11012. Wording is different in 2019 and 2020.
-        B11012 = read_acs('B11012',geos)
+        B11012 = read_acs('B11012', self.geos)
         B11012_lst = [col.split(':')[2] for col in B11012.columns if len(col.split(':')) > 2]
 
-        ## which census columns to match in synth pop
-        ##  read from census or generated in generate_targets()
-        target_columns = ['B11016:Family households:2-person household',
+        # Target columns to match in synth pop
+        # (read from census or generated in generate_targets())
+        self.target_columns = ['B11016:Family households:2-person household',
             'B11016:Family households:3-person household',
             'B11016:Family households:4-person household',
             'B11016:Family households:5-person household',
@@ -1670,17 +1756,17 @@ class ProcessData:
             'B09021:65 years and over:Householder living with partner or partner of householder',
             'B09021:65 years and over:Other relatives',
             'B09021:65 years and over:Other nonrelatives',
-                *['B19001:'+k for k in inc_cats],
+                *['B19001:'+k for k in self.inc_cats],
             'B22010:Household received Food Stamps/SNAP in the past 12 months:',
-            *['C24030:'+k for k in ind_codes.keys()],
+            *['C24030:'+k for k in self.ind_codes.keys()],
             "B25006:Householder who is Black or African American alone",
             "B11001H:Householder white non-hispanic",
             "B11001I:Householder hispanic any race"
             ]
 
-        ## generated sample columns that match each of target_columns, in the same order:
-        ## (generated in read_psamp and read_hsamp)
-        sample_columns = ['fam_hh_2', 'fam_hh_3', 'fam_hh_4', 'fam_hh_5', 'fam_hh_6', 'fam_hh_7o', 
+        # Generated sample columns that match each of target_columns, in the same order
+        # (generated in read_psamp and read_hsamp)
+        self.sample_columns = ['fam_hh_2', 'fam_hh_3', 'fam_hh_4', 'fam_hh_5', 'fam_hh_6', 'fam_hh_7o', 
             'non_fam_hh_1', 'non_fam_hh_2', 'non_fam_hh_3', 'non_fam_hh_4', 'non_fam_hh_5', 'non_fam_hh_6', 'non_fam_hh_7o', 
             'w_own_ch_u18_married_fam_work0', 
             'w_own_ch_u18_married_fam_work1',
@@ -1728,36 +1814,114 @@ class ProcessData:
             'age_65o_partner', 
             'age_65o_other_rel',
             'age_65o_non_rel',
-            *inc_cats,
+            *self.inc_cats,
             'snap',
-            *['ind_'+k for k in ind_codes.keys()],
+            *['ind_'+k for k in self.ind_codes.keys()],
             'hh_race_black_alone',
             'hh_white_non_hispanic',
             'hh_hispanic'
             ]
 
-        ## output directory
+        # Derived lists of keys
+        self.ind_keys = list(self.ind_codes.keys())
+
+        # Ensure output directory exists and save codes for workplace generation
         os.makedirs(PROCESSED_DIR,exist_ok=True)
-        
-        ## save codes for workplace gen
-        ind_keys = list(ind_codes.keys())
         with open(os.path.join(PROCESSED_DIR,'codes.json'), 'w') as f:
-            json.dump({'ind_codes':ind_keys, 'occ_codes':list(occ_codes.keys())}, f)
+            json.dump({'ind_codes': self.ind_keys, 'occ_codes': list(self.occ_codes.keys())}, f)
 
-        p_summary = generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, ind_codes, occ_codes, more_summary_cols)
-        adults_hh_cbg = read_acs('B09021',geos)[['B09021:']]
-        cbg_index = adults_hh_cbg.index
-        geo_xwalk = read_geo_xwalk(cbg_index)
-        gq_stats = generate_gq(geos, adults_hh_cbg, geo_xwalk, p_summary, ind_codes, occ_codes)
-        generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_cols, ind_codes, occ_codes)
-        calc_commute_marginals(geos, ind_codes, ind_keys, commute_states)
+        # Placeholders for intermediate results when running step-by-step
+        self.p_summary = None
+        self.adults_hh_cbg = None
+        self.geo_xwalk = None
+        self.gq_stats = None
+
+    def generate_samples(self):
+        """Run the sample generation step and cache the summary."""
+        self.p_summary = generate_samples(
+            self.sample_columns,
+            self.ADJINC,
+            self.inc_cats,
+            self.inc_cols,
+            self.LODES_cutoff,
+            self.ind_codes,
+            self.occ_codes,
+            self.more_summary_cols,
+        )
+        return self.p_summary
+
+    def generate_gq(self):
+        """Run the group quarters generation step and cache intermediate data."""
+        if self.geos is None:
+            raise ValueError("geos is not defined in config; cannot generate group quarters data.")
+        if self.p_summary is None:
+            raise RuntimeError("p_summary is not available. Call generate_samples() first.")
+
+        self.adults_hh_cbg = read_acs('B09021', self.geos)[['B09021:']]
+        cbg_index = self.adults_hh_cbg.index
+        self.geo_xwalk = read_geo_xwalk(cbg_index)
+        self.gq_stats = generate_gq(
+            self.geos,
+            self.adults_hh_cbg,
+            self.geo_xwalk,
+            self.p_summary,
+            self.ind_codes,
+            self.occ_codes,
+        )
+        return self.gq_stats
+
+    def generate_targets(self):
+        """Run the target generation step."""
+        if self.geos is None:
+            raise ValueError("geos is not defined in config; cannot generate targets.")
+        if self.geo_xwalk is None or self.gq_stats is None:
+            raise RuntimeError("geo_xwalk or gq_stats not available. Call generate_gq() first.")
+
+        generate_targets(
+            self.target_columns,
+            self.geos,
+            self.geo_xwalk,
+            self.gq_stats,
+            self.inc_cats,
+            self.inc_cols,
+            self.ind_codes,
+            self.occ_codes,
+        )
+
+    def calc_commute_marginals(self):
+        """Run the commute marginals calculation step."""
+        if self.geos is None:
+            raise ValueError("geos is not defined in config; cannot calculate commute marginals.")
+
+        calc_commute_marginals(
+            self.geos,
+            self.ind_codes,
+            self.ind_keys,
+            self.commute_states,
+        )
+
+    def generate_work_sizes(self):
+        """Run the workplace size generation step."""
         generate_work_sizes()
-        generate_schools(geos, main_year)
 
-        print("Processing complete")
+    def generate_schools(self):
+        """Run the school processing step."""
+        if self.geos is None or self.main_year is None:
+            raise ValueError("geos or main_year not defined in config; cannot generate schools.")
+        generate_schools(self.geos, self.main_year)
+
+    def run_all(self):
+        """Run the full census processing pipeline."""
+        self.generate_samples()
+        self.generate_gq()
+        self.generate_targets()
+        self.calc_commute_marginals()
+        self.generate_work_sizes()
+        self.generate_schools()
+        print("All ProcessData() steps complete")
 
 def main():
-    runner = ProcessData()
+    runner = ProcessData(auto_run=False)
     runner.run_all()
 
 
