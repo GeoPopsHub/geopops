@@ -29,7 +29,7 @@ File-by-file translation: each Julia file maps to a corresponding Python module,
 | `households.jl` | `households.py` | Household & person generation, group quarters |
 | `schools.jl` | `schools.py` | School assignment |
 | `workplaces.jl` | `workplaces.py` | Workplace generation, worker assignment, commute matrix IPF |
-| `netw.jl` | `networks.py` | Contact network generation (SBM, small-world, complete graphs) |
+| `netw.jl` | `networks.py` | Contact network generation (SBM, small-world, complete graphs) AND location matrix generation for ephemeral contacts |
 | `export_synthpop.jl` + `export_network.jl` | `export.py` | Export population/network to CSV/MTX |
 | `synthpop.jl` | *(orchestration moves into `RunPython`)* | Thin orchestrator; logic absorbed by the class |
 
@@ -102,7 +102,7 @@ Plain tuples as dict keys:
 ## Algorithm Translation
 
 ### Simulated Annealing (co.py)
-- Direct translation of `anneal()`, single-threaded, using numpy
+- Direct translation of `anneal()`, single-threaded, using numpy. Inner loop runs up to 200k iterations per CBG across potentially thousands of CBGs.
 - `summarize()` → `pop[idxs, :].sum(axis=0)`
 - `FTdist()` → `np.sum((np.sqrt(v1 + 1) - np.sqrt(v2 + 1)) ** 2)`
 - `mutate!()` / `revert!()` → mutate list in-place, return undo info
@@ -110,18 +110,74 @@ Plain tuples as dict keys:
 - `SharedMatrix` / `@distributed` / `pmap` all removed — regular numpy array and for-loop
 
 ### IPF for Commute Matrices (workplaces.py)
-- Use a numpy-based IPF implementation
-- Validate that results match the existing `ipfn.py` before switching
-- The IPF here is 2-margin on a 2D matrix — straightforward
+- Use a numpy-based IPF implementation; validate against existing `ipfn.py` before switching
+- The IPF runs in a per-origin loop over all origins:
+  - For each origin, builds an initial industry-by-destination matrix from WAC data proportions
+  - Runs 2-margin IPF (industry margin from census, destination margin from LODES OD)
+  - Special handling for origins with no commute data (assign to self or random same-county dest)
+  - Outputs sparse OD proportion matrices per industry category as compressed CSV
+- Reads `processed/codes.json` for industry codes (`ind_codes`)
 
 ### Network Generation (networks.py)
 - `networkx.stochastic_block_model()` replaces `Graphs.stochastic_block_model()`
-- `networkx.watts_strogatz_graph()` replaces `Graphs.watts_strogatz()`
+  - **Important:** Julia passes a mean-degree matrix; networkx expects an edge-probability matrix. Convert: `p[i,j] = c_matrix[i,j] / n_vec[j]`
+  - Preserve zero-degree vertex fix-up: after generation, add a random edge for any isolated nodes
+- `networkx.watts_strogatz_graph(n, k, p)` replaces `Graphs.watts_strogatz(n, K, B)`
+  - Both use `K`/`k` as total nearest neighbors (not per-side); verify during implementation
 - `networkx.complete_graph()` replaces `Graphs.complete_graph()`
 - Edge extraction and sparse matrix construction via `scipy.sparse`
 
+### Location Matrix Generation (networks.py)
+- `generate_location_matrices()` groups people by census tract for ephemeral location-based contacts
+- Builds two sparse matrices: work-location contacts and residential-location contacts (columns = tracts, rows = people)
+- Also builds per-person location lookups (work location, residential location)
+- These outputs are used by the downstream simulation; export them alongside adjacency matrices
+
 ### Matrix Market Export (export.py)
 - `scipy.io.mmwrite()` replaces Julia's `MatrixMarket.mmwrite()`
+
+## In-Memory Data Flow
+
+With `.jlse` serialization removed, data passes between pipeline stages via `RunPython` instance attributes:
+
+- **After `.CO()`:** `self.co_results: dict[str, dict[str, list[str]]]` — county → {cbg_code → list of household serial numbers}; `self.co_scores: dict[str, dict[str, float]]`
+- **After `.SynthPop()`:**
+  - `self.cbgs: dict[str, int]` — cbg_code → index
+  - `self.people: dict[tuple, PersonData]`
+  - `self.households: dict[tuple, Household]`
+  - `self.gqs: dict[tuple, GQres]`
+  - `self.sch_students: dict[str, list[tuple]]`
+  - `self.company_workers: dict[tuple, list[tuple]]`
+  - `self.adj_hh, self.adj_wp, self.adj_sch, self.adj_gq: scipy.sparse matrices`
+  - `self.adj_mat_keys: list[tuple]` — person key ordering for matrix indices
+  - `self.loc_matrices: dict` — location contact matrices and lookups
+- **After `.Export()`:** all of the above, plus files written to `pop_export/`
+
+## Config Parameters
+
+The following `config.json` keys are consumed by the Julia code and must be read by `RunPython`:
+
+| Key | Type | Default | Used by |
+|---|---|---|---|
+| `CO_crit_val` | float | 10.0 | co.py |
+| `CO_cooldown` | float | 0.99 | co.py |
+| `CO_maxgens` | int | 200000 | co.py |
+| `n_closest_schools` | int | 4 | schools.py |
+| `p_closest_school` | float | 0.9 | schools.py |
+| `workplace_K` | int | 8 | networks.py |
+| `school_K` | int | 12 | networks.py |
+| `gq_K` | int | 12 | networks.py |
+| `netw_K` | int | 8 | networks.py |
+| `netw_B` | float | 0.25 | networks.py |
+| `income_associativity_coefficient` | float | 0.9 | networks.py |
+| `school_associativity_coefficient` | float | 0.9 | networks.py |
+| `min_gq_residents` | int | 20 | households.py |
+| `additional_traits` | list[str] | [] | households.py |
+| `inst_res_per_worker` | float | 10 | workplaces.py |
+| `noninst_res_per_worker` | float | 50 | workplaces.py |
+| `min_gq_workers` | int | 2 | workplaces.py |
+
+Additionally, `processed/codes.json` provides `ind_codes` (industry category codes) used by households.py, workplaces.py, and networks.py.
 
 ## API Changes
 
@@ -197,16 +253,22 @@ pop_export/
 ## Validation Strategy
 
 1. Run Julia on a small test geography and save all outputs
-2. Run Python equivalent on the same geography with the same random seed
+2. Run Python equivalent on the same geography
 3. Compare:
    - **CO scores:** same ballpark (not identical — different RNG streams)
    - **Households/schools/workplaces:** given identical CO results, counts and assignments should match
    - **Networks:** degree distributions and edge counts should be statistically similar
    - **Exports:** CSV/MTX files structurally identical (same columns, same row counts)
 
-## Future Work (Out of Scope)
+**Random seeds:** Julia and Python use different RNG implementations, so exact output matching is impossible even with the same seed value. Validation focuses on statistical equivalence (same distributions, same totals, same structure) rather than bit-for-bit matching. Use `numpy.random.default_rng(seed)` for reproducibility within Python runs.
+
+**Performance:** Single-threaded Python will be slower than parallel Julia (estimated 5-20x). For large geographies (full states), this could mean hours. Acceptable for initial correctness validation on small test geographies; Numba optimization is planned as follow-up.
+
+## Out of Scope
 
 - Numba parallelization of simulated annealing
 - API refactoring (collapsing pipeline steps, richer return types)
 - Removing Julia source files from the repository
 - Performance benchmarking Python vs Julia
+- `test_netw.jl` — Julia test/analysis script, does not need conversion
+- GQ type strings: `instu18`, `inst1864`, `ninst1864civ`, `milGQ`, `inst65o` (documented here for reference; match Julia's `Symbol` names)
