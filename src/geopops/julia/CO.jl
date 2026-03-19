@@ -275,28 +275,43 @@ function process_counties(counties=[])
         ## puma is the most local sample level, has the fewest samples available
         samp_masks = sample_lookup(samp_geo, :st_puma, [cbg_puma[g] for g in geos])
         x = optimize(samples, samp_masks, targs, n_hhs, params)
+        scores = [a[3] for a in x]
+        n_bad = sum(s > c_val for s in scores)
+        println("  county ", c, ": ", length(x), " targets; ", n_bad, " above threshold (will rerun); E0 min/mean/max: ", minimum(scores), " / ", sum(scores)/length(scores), " / ", maximum(scores))
 
         println("\n county \n")
         ## rerun poor matches using county-level
         rerun = findall([a[3]>c_val for a in x])
+        println("  county pass: ", length(rerun), " targets to rerun")
         samp_masks = sample_lookup(samp_geo, :county, [cbg_county[g] for g in geos[rerun]])
         params_r = Dict(:maxgens => CO_maxgens, :critval => c_val, :cooldown => CO_cooldown, :report => CO_report)
         reoptimize!(x, rerun, samples, samp_masks, targs, n_hhs, params_r)
+        scores = [a[3] for a in x]
+        n_bad = sum(s > c_val for s in scores)
+        println("  after county: ", n_bad, " still above threshold; E0 min/mean/max: ", minimum(scores), " / ", sum(scores)/length(scores), " / ", maximum(scores))
 
         println("\n cbsa \n")
         ## cbsa-level
         rerun = findall([a[3]>c_val for a in x])
+        println("  cbsa pass: ", length(rerun), " targets to rerun")
         samp_masks = sample_lookup(samp_geo, :cbsa, [cbg_cbsa[g] for g in geos[rerun]])
         params_r = Dict(:maxgens => CO_maxgens, :critval => c_val, :cooldown => CO_cooldown, :report => CO_report)
         reoptimize!(x, rerun, samples, samp_masks, targs, n_hhs, params_r)
-        
+        scores = [a[3] for a in x]
+        n_bad = sum(s > c_val for s in scores)
+        println("  after cbsa: ", n_bad, " still above threshold; E0 min/mean/max: ", minimum(scores), " / ", sum(scores)/length(scores), " / ", maximum(scores))
+
         println("\n urb \n")
         ## urbanization level, has the most samples; more likely to match but longer to search
         ##  (also the least associated with the target's local geography)
         rerun = findall([a[3]>c_val for a in x])
+        println("  urb pass: ", length(rerun), " targets to rerun")
         samp_masks = sample_lookup(samp_geo, :U, [cbg_urban[g] for g in geos[rerun]])
         params_r = Dict(:maxgens => CO_maxgens, :critval => c_val, :cooldown => CO_cooldown_slow, :report => CO_report)
         reoptimize!(x, rerun, samples, samp_masks, targs, n_hhs, params_r)
+        scores = [a[3] for a in x]
+        n_bad = sum(s > c_val for s in scores)
+        println("  after urb: ", n_bad, " still above threshold; E0 min/mean/max: ", minimum(scores), " / ", sum(scores)/length(scores), " / ", maximum(scores))
 
         ## store results as dict keyed by cbg code; look up actual hh id's of sample indices
         scores = Dict(geos .=> [a[3] for a in x])
