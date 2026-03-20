@@ -15,7 +15,7 @@ Resulting files include a list of agents with attributes (e.g., age, gender, inc
 - Class for exporting files compatible with the agent-based modeling software [Starsim](https://starsim.org/) (Institute for Disease Modeling)
 
 ## Get involved
-GeoPops is in development and we welcome feedback! Get in touch if you've tried making a population of your own or want to become a member. You can upload your own example as a respository in the hub.
+GeoPops is in development and we welcome feedback! Get in touch if you've tried making a population of your own or want to become a member. You can upload your own example as a respository in the [GeoPopsHub](https://github.com/GeoPopsHub).
 
 ## Tutorial
 See the repo [sc_spartanburg_measles](https://github.com/GeoPopsHub/sc_spartanburg_measles) for a detailed example of how to build a population, simulate a disease, test out interventions, and track outcomes by subgroup. [`1_run_geopops.ipynb`](https://github.com/GeoPopsHub/sc_spartanburg_measles/blob/main/1_run_geopops.ipynb) has instructions on how to build a GeoPops population.
