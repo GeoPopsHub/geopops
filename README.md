@@ -14,6 +14,8 @@ Resulting files include a list of agents with attributes (e.g., age, gender, inc
 - Users can adjust all config parameters from the front-end
 - Class for exporting files compatible with the agent-based modeling software [Starsim](https://starsim.org/) (Institute for Disease Modeling)
 
+There are many packages for generating agents and households from Census data, but GeoPops is the only one that is completely open source and generalizable that spatially connects agents in school and workplace networks. In combination with agent-based modeling tools like Starsim, GeoPops can facilitate timely context-specific scenario modeling of respiratory infectious diseases.
+
 ## Get involved
 GeoPops is in development and we welcome feedback! Get in touch if you've tried making a population of your own or want to become a member. You can upload your own example as a respository in the [GeoPopsHub](https://github.com/GeoPopsHub).
 
