@@ -20,19 +20,6 @@ pars_geopops = {'path': "data", # Set a folder where you want output files to be
 c = geopops.WriteConfig(**pars_geopops) # Define parameters for pop generation in config.json
 # c.get_pars() # View all parameters from config.json
 
-@sc.timer()
-@pytest.mark.skip(reason="Too slow")
-def test_download():
-    """ Check that download works (~10 min)"""
-    d = geopops.DownloadData(auto_run=True)
-    return d
-
-@sc.timer()
-@pytest.mark.skip(reason="Too slow")
-def test_processing():
-    """ Check that data processing works (~5 min)"""
-    p = geopops.ProcessData(auto_run=True) # auto_run=True to run all 
-    return p
 
 @sc.timer()
 def test_julia_CO():
@@ -40,11 +27,13 @@ def test_julia_CO():
     j.CO()
     return
 
+
 @sc.timer()
 def test_julia_synthpop():
     j = geopops.RunJulia()
     j.SynthPop()
     return
+
 
 @sc.timer()
 def test_export():
@@ -59,8 +48,6 @@ def test_export():
 
 
 if __name__ == "__main__":
-    # test_download()
-    # test_processing()
     T = sc.timer()
     test_julia_CO()
     test_julia_synthpop()

@@ -14,12 +14,18 @@ Resulting files include a list of agents with attributes (e.g., age, gender, inc
 - Users can adjust all config parameters from the front-end
 - Class for exporting files compatible with the agent-based modeling software [Starsim](https://starsim.org/) (Institute for Disease Modeling)
 
-## How to use
+## Quick start
+
+1. Install: `pip install geopops`
+2. Get a [US Census API key](https://api.census.gov/data/key_signup.html) and set as the environment variable `CENSUS_API_KEY`
+3. See `tests/test_python_workflow.py` for the full workflow (NB: this workflow does not require Julia installation)
+
+## How to use (with Julia)
 
 See [tutorials/MIDAS](https://github.com/ACCIDDA/GeoPops/tree/main/tutorials/MIDAS) for more detailed usage in a Notebook tutorial. Set up and basic usage below.
 
 
-First, create a **Julia environment** with the dependencies listed below. It may be easiest to store the environment in the same folder you will use for output files. While called with Python commands, combinatorial optimization, school and workplace assignment, and network generation steps occur in Julia to decrease run time. The following terminal commands should work with MacOS. Don't copy the comments; these are just for reference. The Julia website also has download instructions [here](https://julialang.org/install/).
+First, create a **Julia environment** with the dependencies listed below. It may be easiest to store the environment in the same folder you will use for output files. While called with Python commands, combinatorial optimization, school and workplace assignment, and network generation steps occur in Julia to decrease run time (by about 20%). The following terminal commands should work with MacOS. Don't copy the comments; these are just for reference. The Julia website also has download instructions [here](https://julialang.org/install/).
 ```
 cd "YOUR_PATH"
 curl -fsSL https://install.julialang.org | sh
