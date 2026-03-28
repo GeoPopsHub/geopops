@@ -71,10 +71,10 @@ def test_python_export(runner):
     """Test export and ForStarsim integration."""
     runner.Export()
     ppl = geopops.ForStarsim.People()
-    h = geopops.ForStarsim.GPNetwork(name='homenet', beta_value=1.0)
-    s = geopops.ForStarsim.GPNetwork(name='schoolnet', beta_value=1.0)
-    w = geopops.ForStarsim.GPNetwork(name='worknet', beta_value=1.0)
-    g = geopops.ForStarsim.GPNetwork(name='gqnet', beta_value=1.0)
+    h = geopops.ForStarsim.GPNetwork(name='homenet', edge_weight=1.0)
+    s = geopops.ForStarsim.GPNetwork(name='schoolnet', edge_weight=1.0)
+    w = geopops.ForStarsim.GPNetwork(name='worknet', edge_weight=1.0)
+    g = geopops.ForStarsim.GPNetwork(name='gqnet', edge_weight=1.0)
     return ppl, h, s, w, g
 
 

@@ -183,28 +183,47 @@ def process_counties(data_dir, counties=None, seed=None):
         print("  puma")
         samp_masks = sample_lookup(samp_geo, 'st_puma', [cbg_puma[g] for g in geos])
         x = optimize(samples, samp_masks, targs, n_hhs, params, rng)
+        scores = [a[2] for a in x]
+        n_bad = sum(1 for s in scores if s > c_val)
+        print(f"  county {c}: {len(x)} targets; {n_bad} above threshold (will rerun); "
+              f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
         # County level retry
         print("  county")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
+        print(f"  county pass: {len(rerun)} targets to rerun")
         if rerun:
             re_masks = sample_lookup(samp_geo, 'county', [cbg_county[geos[i]] for i in rerun])
             reoptimize(x, rerun, samples, re_masks, targs, n_hhs, params, rng)
+        scores = [a[2] for a in x]
+        n_bad = sum(1 for s in scores if s > c_val)
+        print(f"  after county: {n_bad} still above threshold; "
+              f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
         # CBSA level retry
         print("  cbsa")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
+        print(f"  cbsa pass: {len(rerun)} targets to rerun")
         if rerun:
             re_masks = sample_lookup(samp_geo, 'cbsa', [cbg_cbsa[geos[i]] for i in rerun])
             reoptimize(x, rerun, samples, re_masks, targs, n_hhs, params, rng)
+        scores = [a[2] for a in x]
+        n_bad = sum(1 for s in scores if s > c_val)
+        print(f"  after cbsa: {n_bad} still above threshold; "
+              f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
         # Urbanization level retry (slower cooldown)
         print("  urbanization")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
+        print(f"  urb pass: {len(rerun)} targets to rerun")
         if rerun:
             params_slow = dict(maxgens=CO_maxgens, critval=c_val, cooldown=CO_cooldown_slow)
             re_masks = sample_lookup(samp_geo, 'U', [cbg_urban[geos[i]] for i in rerun])
             reoptimize(x, rerun, samples, re_masks, targs, n_hhs, params_slow, rng)
+        scores = [a[2] for a in x]
+        n_bad = sum(1 for s in scores if s > c_val)
+        print(f"  after urb: {n_bad} still above threshold; "
+              f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
         # Store results: cbg_code -> list of household serial numbers
         co_results_county = {}
