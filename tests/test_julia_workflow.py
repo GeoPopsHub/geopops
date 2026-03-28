@@ -6,9 +6,9 @@ Prerequisites:
 - .env file with CENSUS_API_KEY and JULIA_ENV_PATH (see .env.example)
 """
 
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path().resolve().parent.parent / "src"))
+import sciris as sc
 import geopops
+import pytest
 
 pars_geopops = {'path': "data", # Set a folder where you want output files to be stored
                 'main_year': 2019, # Year of data
@@ -20,32 +20,47 @@ pars_geopops = {'path': "data", # Set a folder where you want output files to be
 c = geopops.WriteConfig(**pars_geopops) # Define parameters for pop generation in config.json
 # c.get_pars() # View all parameters from config.json
 
+@sc.timer()
+@pytest.mark.skip(reason="Too slow")
 def test_download():
     """ Check that download works (~10 min)"""
     d = geopops.DownloadData(auto_run=True)
     return d
 
+@sc.timer()
+@pytest.mark.skip(reason="Too slow")
 def test_processing():
     """ Check that data processing works (~5 min)"""
     p = geopops.ProcessData(auto_run=True) # auto_run=True to run all 
     return p
 
+@sc.timer()
 def test_julia_CO():
     j = geopops.RunJulia()
     j.CO()
     return
 
+@sc.timer()
 def test_julia_synthpop():
     j = geopops.RunJulia()
     j.SynthPop()
     return
 
+@sc.timer()
 def test_export():
     j = geopops.RunJulia()
     j.Export()
     ppl = geopops.ForStarsim.People()
-    h = geopops.ForStarsim.GPNetwork(name='homenet', edge_weight=1.0)
-    s = geopops.ForStarsim.GPNetwork(name='schoolnet', edge_weight=1.0)
-    w = geopops.ForStarsim.GPNetwork(name='worknet', edge_weight=1.0)
-    g = geopops.ForStarsim.GPNetwork(name='gqnet', edge_weight=1.0)
+    h = geopops.ForStarsim.GPNetwork(name='homenet', beta_value=1.0)
+    s = geopops.ForStarsim.GPNetwork(name='schoolnet', beta_value=1.0)
+    w = geopops.ForStarsim.GPNetwork(name='worknet', beta_value=1.0)
+    g = geopops.ForStarsim.GPNetwork(name='gqnet', beta_value=1.0)
     return ppl, h, s, w, g
+
+
+if __name__ == "__main__":
+    # test_download()
+    # test_processing()
+    test_julia_CO()
+    test_julia_synthpop()
+    test_export()
