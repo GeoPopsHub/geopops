@@ -81,78 +81,85 @@ class ForStarsim:
             print("Creating Starsim People object from GeoPops data")
             
             # Make people dataframe
+            # Read in all agents, including dummy agents, where index corresponds to agent ID in network adjacency matrices
             adj_mat_keys = pd.read_csv(f'{self.path}/pop_export/adj_mat_keys.csv')
+            # Read in agents and attributes for people living in geo area
             people = pd.read_csv(f'{self.path}/pop_export/people.csv')
+            # Merge adj_mat_keys to people and attributes
             ppl_df = adj_mat_keys.merge(people, on=['p_id','hh_id','cbg_id'], how='left')
-            
-            # Household ID
-            ppl_df['hh_id'] = ppl_df['hh_id'].astype(float)
-            
-            # Age groups
-            ppl_df.loc[ppl_df['age'] >= 0, 'agegroup'] = 0.0
-            ppl_df.loc[ppl_df['age'] >= 10, 'agegroup'] = 1.0
-            ppl_df.loc[ppl_df['age'] >= 20, 'agegroup'] = 2.0
-            ppl_df.loc[ppl_df['age'] >= 30, 'agegroup'] = 3.0
-            ppl_df.loc[ppl_df['age'] >= 40, 'agegroup'] = 4.0
-            ppl_df.loc[ppl_df['age'] >= 50, 'agegroup'] = 5.0
-            ppl_df.loc[ppl_df['age'] >= 60, 'agegroup'] = 6.0
-            ppl_df.loc[ppl_df['age'] >= 70, 'agegroup'] = 7.0
-            ppl_df.loc[ppl_df['age'] >= 80, 'agegroup'] = 8.0
-            ppl_df.loc[ppl_df['age'] >= 90, 'agegroup'] = 9.0
-            
-            # Student status
-            ppl_df.loc[~ppl_df['sch_grade'].isna(), 'student'] = 1.0
-            
-            # Race/ethnicity
-            ppl_df.loc[ppl_df['race_black_alone'] == 0, 'race'] = 0.0
-            ppl_df.loc[ppl_df['hispanic'] == 1, 'race'] = 1.0
-            ppl_df.loc[ppl_df['white_non_hispanic'] == 1, 'race'] = 2.0
-            
-            # State/county
+            # Merge school ids into people dataframe
+            schools = pd.read_csv(f'{self.path}/pop_export/sch_students.csv')
+            ppl_df = ppl_df.merge(schools, on=['p_id','hh_id','cbg_id'], how='left')
+            ppl_df.loc[ppl_df['sch_code'].isnull(), 'sch_code'] = 0
+            # Insert unique ID for each agent
+            ppl_df.insert(0, 'uid', ppl_df['index_zero'].values)
+            # Map cbg_id to 15-digit FIPS code
             cbg_idxs = pd.read_csv(f'{self.path}/pop_export/cbg_idxs.csv')
             ppl_df = ppl_df.merge(cbg_idxs, on='cbg_id', how='left')
-            # print(ppl_df['cbg_geocode'].unique())
-            ppl_df['state'] = ppl_df['cbg_geocode'].astype(str).str[:2].replace('na','0').astype(float)
-            ppl_df['county'] = ppl_df['cbg_geocode'].astype(str).str[:5].replace('na','0').astype(float)
-            ppl_df['tract'] = ppl_df['cbg_geocode'].astype(str).str[:11].replace('na','0').astype(float)
-            ppl_df['cbg'] = ppl_df['cbg_geocode'].astype(float).astype(str).str[:12].replace('na','0').astype(float)
-            # print(ppl_df['cbg_geocode'].dtype)
-            # ppl_df['cbg'] = ppl_df['cbg_geocode'].astype(float).astype(str).str[:12].replace('na','0').astype(float)
-            # print(len(ppl_df['cbg'].unique()))
-            
-            # Income category and disease vulnerability
-            # Income, 1 is <=40k, 2 is >40k, 0 is null/not commuter
-            # ppl_df['ses'] = ppl_df['commuter_income_category'].fillna(0.0)
-            # ppl_df.loc[ppl_df['commuter'] == 1, 'ses'] = ppl_df['commuter_income_category'].fillna(0.0)
-            
-            # Disease vulnerability, 1 is <= age 65, 2 is > age 65, 0 is null/no age data
-            # ppl_df.loc[ppl_df['age'] <= 65, 'vul'] = 1.0
-            # ppl_df.loc[ppl_df['age'] >  65, 'vul'] = 2.0
-            # ppl_df['age'] = ppl_df['age'].fillna(0.0)
-            
+            # Create columns for state, county, tract, and cbg
+            ppl_df['state'] = ppl_df['cbg_geocode'].astype(str).str[:2].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
+            ppl_df['county'] = ppl_df['cbg_geocode'].astype(str).str[:5].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
+            ppl_df['tract'] = ppl_df['cbg_geocode'].astype(str).str[:11].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
+            ppl_df['cbg_geocode'] = ppl_df['cbg_geocode'].astype(str).str[:12].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
+            # Create 10-year age groups (dummy agents do not have age data)
+            ppl_df.loc[(ppl_df['age'] >= 0) & (~ppl_df['age'].isnull()), 'agegroup'] = 0.0
+            ppl_df.loc[(ppl_df['age'] >= 10) & (~ppl_df['age'].isnull()), 'agegroup'] = 1.0
+            ppl_df.loc[(ppl_df['age'] >= 20) & (~ppl_df['age'].isnull()), 'agegroup'] = 2.0
+            ppl_df.loc[(ppl_df['age'] >= 30) & (~ppl_df['age'].isnull()), 'agegroup'] = 3.0
+            ppl_df.loc[(ppl_df['age'] >= 40) & (~ppl_df['age'].isnull()), 'agegroup'] = 4.0
+            ppl_df.loc[(ppl_df['age'] >= 50) & (~ppl_df['age'].isnull()), 'agegroup'] = 5.0
+            ppl_df.loc[(ppl_df['age'] >= 60) & (~ppl_df['age'].isnull()), 'agegroup'] = 6.0
+            ppl_df.loc[(ppl_df['age'] >= 70) & (~ppl_df['age'].isnull()), 'agegroup'] = 7.0
+            ppl_df.loc[(ppl_df['age'] >= 80) & (~ppl_df['age'].isnull()), 'agegroup'] = 8.0
+            ppl_df.loc[(ppl_df['age'] >= 90) & (~ppl_df['age'].isnull()), 'agegroup'] = 9.0
+            # Add household ID
+            # Add household ID as a state
+            hh = pd.read_csv(f'{self.path}/pop_export/hh.csv')
+            hh['household'] = hh.index + 1 # Turn the idex into a unique household id
+            hh.drop(columns=['sample_index'], inplace=True)
+            ppl_df = ppl_df.merge(hh, on=['cbg_id','hh_id'], how='left') 
+            ppl_df.loc[ppl_df['household'].isnull(), 'household'] = 0 # replace NaN with 0
+            # Create race/ethnicity categories in single variable
+            ppl_df.loc[ppl_df['race_black_alone'] == 0, 'race_ethnicity'] = 0.0 # Black alone
+            ppl_df.loc[ppl_df['hispanic'] == 1, 'race_ethnicity'] = 1.0 # Hispanic
+            ppl_df.loc[ppl_df['white_non_hispanic'] == 1, 'race_ethnicity'] = 2.0 # White non-Hispanic
+            # print(ppl_df.columns)
+            # Reorder columns
+            ppl_df = ppl_df[['uid','p_id','hh_id','cbg_id','sample_index','state','county','tract','cbg_geocode','household',
+                            'age','agegroup','female', 'race_black_alone','white_non_hispanic','hispanic','race_ethnicity',
+                            'working','commuter','commuter_income_category','commuter_workplace_category',
+                            'sch_grade','sch_code']]
             # Export to csv
             ppl_df.to_csv(f'{self.path}/pop_export/people_all.csv', index=False)
             
             # Create Starsim states
-            hh_id = ss.FloatArr('hh_id', default=ss.BaseArr(ppl_df['hh_id'].values))
             age = ss.FloatArr('age', default=ss.BaseArr(ppl_df['age'].values))
-            female = ss.FloatArr('female', default=ss.BaseArr(ppl_df['female'].values))
             agegroup = ss.FloatArr('agegroup', default=ss.BaseArr(ppl_df['agegroup'].values))
-            race = ss.FloatArr('race', default=ss.BaseArr(ppl_df['race'].values))
-            cbg_id = ss.FloatArr('cbg_id', default=ss.BaseArr(ppl_df['cbg_id'].values))
-            state = ss.FloatArr('state', default=ss.BaseArr(ppl_df['state'].values))
-            county = ss.FloatArr('county', default=ss.BaseArr(ppl_df['county'].values))
-            tract = ss.FloatArr('tract', default=ss.BaseArr(ppl_df['tract'].values))
-            cbg = ss.FloatArr('cbg', default=ss.BaseArr(ppl_df['cbg'].values))
-            # wrk = ss.FloatArr('wrk', default=ss.BaseArr(ppl_df['commuter'].values)) # only commuters have income categories
-            worker = ss.FloatArr('worker', default=ss.BaseArr(ppl_df['commuter'].values)) # only commuters have income categories
-            # student = ss.FloatArr('student', default=ss.BaseArr(ppl_df['student'].values))
-            # ses = ss.FloatArr('ses', default=ss.BaseArr(ppl_df['ses'].values))
-            # vul = ss.FloatArr('vul', default=ss.BaseArr(ppl_df['vul'].values))
-            # hsl = ss.FloatArr('hsl', default=np.random.choice([0.0, 1.0,2.0], size=len(ppl_df), p=[1/3, 1/3, 1/3]))
+            female = ss.FloatArr('female', default=ss.BaseArr(ppl_df['female'].values))
+            race_ethnicity = ss.FloatArr('race_ethnicity', default=ss.BaseArr(ppl_df['race_ethnicity'].values))
+            state = ss.IntArr('state', default=ss.BaseArr(ppl_df['state'].values))
+            county = ss.IntArr('county', default=ss.BaseArr(ppl_df['county'].values))
+            tract = ss.IntArr('tract', default=ss.BaseArr(ppl_df['tract'].values))
+            cbg_geocode = ss.IntArr('cbg_geocode', default=ss.BaseArr(ppl_df['cbg_geocode'].values))
+            household = ss.IntArr('household', default=ss.BaseArr(ppl_df['household'].values)) # Turn this array into a Starsim IntArr
+            commuter = ss.FloatArr('commuter', default=ss.BaseArr(ppl_df['commuter'].values))
+            commuter_income_category = ss.FloatArr('commuter_income_category', default=ss.BaseArr(ppl_df['commuter_income_category'].values))
+            commuter_workplace_category = ss.FloatArr('commuter_workplace_category', default=ss.BaseArr(ppl_df['commuter_workplace_category'].values))
+            # sch_grade = ss.StringArr('sch_grade', default=ss.BaseArr(ppl_df['sch_grade'].values))
+            sch_code = ss.IntArr('sch_code', default=ss.BaseArr(ppl_df['sch_code'].values))
             
             # Create the people object
-            self.ppl = ss.People(n_agents=len(ppl_df), extra_states=[agegroup, race, state, county, tract, cbg, cbg_id,worker, hh_id])
+            self.ppl = ss.People(n_agents=len(ppl_df), extra_states=[agegroup, 
+                                                                     race_ethnicity, 
+                                                                     state,
+                                                                     county,
+                                                                     tract,
+                                                                     cbg_geocode,
+                                                                     household,
+                                                                     commuter,
+                                                                     commuter_income_category,
+                                                                     commuter_workplace_category,
+                                                                     sch_code])
             
             # Add the age state to the existing people object 
             self.ppl.states.append(age, overwrite=True)
@@ -216,10 +223,10 @@ class ForStarsim:
             return df
     
     class GPNetwork(ss.Network):
-        def __init__(self, name, beta_value=1.0):
+        def __init__(self, name, edge_weight=1.0):
             super().__init__()
             self.name = name
-            self.beta_value = beta_value
+            self.edge_weight = edge_weight
             
             # Load config and create networks if not already created
             self._ensure_networks_created()
@@ -244,7 +251,7 @@ class ForStarsim:
             """Populate network edges from dataframe."""
             self.edges.p1 = self.network_df['p1'].values
             self.edges.p2 = self.network_df['p2'].values
-            self.edges.beta = np.full(len(self.network_df['beta']), self.beta_value)
+            self.edges.beta = np.full(len(self.network_df), self.edge_weight)
             self.validate()
             
         def _ensure_networks_created(self):
