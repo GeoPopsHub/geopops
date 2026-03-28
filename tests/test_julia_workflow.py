@@ -61,6 +61,8 @@ def test_export():
 if __name__ == "__main__":
     # test_download()
     # test_processing()
+    T = sc.timer()
     test_julia_CO()
     test_julia_synthpop()
     test_export()
+    T.toc()
