@@ -2,7 +2,7 @@
 Tests for the pure-Python GeoPops pipeline (RunPython).
 
 Prerequisites:
-- Preprocessed data in tests/data/processed/
+- Preprocessed data in tests/data/processed/ (or run this script with redownload=True)
 """
 
 import sciris as sc

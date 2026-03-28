@@ -8,7 +8,6 @@ Prerequisites:
 
 import sciris as sc
 import geopops
-import pytest
 
 pars_geopops = {'path': "data", # Set a folder where you want output files to be stored
                 'main_year': 2019, # Year of data
