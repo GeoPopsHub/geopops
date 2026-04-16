@@ -1,5 +1,8 @@
 import json
 import os
+from dotenv import load_dotenv, find_dotenv
+
+load_dotenv(find_dotenv())
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -35,6 +38,12 @@ def update_config_values(config,
                          use_pums=None,
                          path=None,
                          julia_env_path=None):
+    # Fall back to environment variables for sensitive/user-specific values
+    if census_api_key is None:
+        census_api_key = os.environ.get("CENSUS_API_KEY")
+    if julia_env_path is None:
+        julia_env_path = os.environ.get("JULIA_ENV_PATH")
+
     if census_api_key is not None:
         config["census_api_key"] = census_api_key
     if main_year is not None:
