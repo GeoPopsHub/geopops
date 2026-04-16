@@ -63,9 +63,9 @@ def _get_students_in_school(people, cbgs_inv):
     return result
 
 
-def generate_schools(people, cbgs, data_dir, seed=None):
+def generate_schools(people, cbgs, data_dir, random_seed=None):
     """Assign students to schools. Returns sch_students: dict[school_code -> list[Pkey]]."""
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(random_seed)
     config = tryJSON(os.path.join(data_dir, 'config.json'))
     n_schools = config.get('n_closest_schools', 4)
     prob_closest = config.get('p_closest_school', 0.9)

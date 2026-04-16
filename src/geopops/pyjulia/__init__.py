@@ -1,6 +1,6 @@
 """
 Pure-Python replacements for GeoPops Julia processing code.
 """
-from .run_python import RunPython
+from .generate_pop import GeneratePop, RunPython
 
-__all__ = ["RunPython"]
+__all__ = ["GeneratePop", "RunPython"]

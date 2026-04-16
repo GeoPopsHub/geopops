@@ -83,7 +83,8 @@ def read_workers_by_cat(co_results, data_dir, ind_codes, counties):
     cat_cols = ['com_ind_' + k for k in ind_codes]
     hh_samps = pd.read_csv(os.path.join(data_dir, 'processed', 'hh_samples.csv'),
                             usecols=['SERIALNO'] + cat_cols, dtype={'SERIALNO': str})
-    hh_idx = dict(zip(hh_samps['SERIALNO'], range(len(hh_samps))))
+    # Keep HH sample row mapping 1-based for Julia parity.
+    hh_idx = dict(zip(hh_samps['SERIALNO'], range(1, len(hh_samps) + 1)))
 
     workers_by_cat = {k: {} for k in ind_codes}
     for co in counties:
@@ -92,8 +93,11 @@ def read_workers_by_cat(co_results, data_dir, ind_codes, counties):
         cbg_dict = co_results[co]
         for ori, hhvec in cbg_dict.items():
             for cat_code, cat_col in zip(ind_codes, cat_cols):
-                total = sum(hh_samps.iloc[hh_idx[x]][cat_col]
-                           for x in hhvec if x in hh_idx and pd.notna(hh_samps.iloc[hh_idx[x]][cat_col]))
+                total = sum(
+                    hh_samps.iloc[hh_idx[x] - 1][cat_col]
+                    for x in hhvec
+                    if x in hh_idx and pd.notna(hh_samps.iloc[hh_idx[x] - 1][cat_col])
+                )
                 workers_by_cat[cat_code][ori] = int(total)
     return workers_by_cat
 
@@ -399,12 +403,12 @@ def generate_commute_matrices(data_dir):
         df.to_csv(os.path.join(proc_dir, f'od_{k}.csv.gz'), index=False, compression='gzip')
 
 
-def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_dir, seed=None):
+def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_dir, random_seed=None):
     """Generate workplaces and assign workers.
     Returns (company_workers, sch_workers, gq_workers, outside_workers, dummies).
     Each *_workers is dict[key -> list[worker_tuple]].
     """
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(random_seed)
     config = tryJSON(os.path.join(data_dir, 'config.json'))
     wp_codes = tryJSON(os.path.join(data_dir, 'processed', 'codes.json'))
     ind_codes = wp_codes.get('ind_codes', [])

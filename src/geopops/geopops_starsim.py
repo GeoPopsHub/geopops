@@ -223,35 +223,106 @@ class ForStarsim:
             return df
     
     class GPNetwork(ss.Network):
-        def __init__(self, name, edge_weight=1.0):
+        def __init__(self, name, edge_weight=1.0, csv_path=None, network_df=None, p1_col='p1', p2_col='p2', beta_col=None):
             super().__init__()
             self.name = name
             self.edge_weight = edge_weight
+            self.csv_path = csv_path
+            self.network_df_input = network_df
+            self.p1_col = p1_col
+            self.p2_col = p2_col
+            self.beta_col = beta_col
             
-            # Load config and create networks if not already created
-            self._ensure_networks_created()
-            
-            # Access class-level dataframes
-            self.network_map = {
-                'homenet': ForStarsim._net_h,
-                'schoolnet': ForStarsim._net_s, 
-                'worknet': ForStarsim._net_w,
-                'gqnet': ForStarsim._net_g
-            }
-            
-            if name not in self.network_map:
-                raise ValueError(f"Unknown network name '{name}'. Available names: {list(self.network_map.keys())}")
-            
-            self.network_df = self.network_map[name]
+            if self.csv_path is not None and self.network_df_input is not None:
+                raise ValueError("Provide only one of csv_path or network_df, not both.")
+
+            # If a custom dataframe is provided, use it directly.
+            if self.network_df_input is not None:
+                self.network_df = self._normalize_network_dataframe(self.network_df_input)
+            # If a custom CSV is provided, load and normalize it.
+            elif self.csv_path is not None:
+                self.network_df = self._load_custom_network_csv()
+            else:
+                # Load config and create networks if not already created
+                self._ensure_networks_created()
+                
+                # Access class-level dataframes
+                self.network_map = {
+                    'homenet': ForStarsim._net_h,
+                    'schoolnet': ForStarsim._net_s, 
+                    'worknet': ForStarsim._net_w,
+                    'gqnet': ForStarsim._net_g
+                }
+                
+                if name not in self.network_map:
+                    raise ValueError(
+                        f"Unknown network name '{name}'. Available built-in names: {list(self.network_map.keys())}. "
+                        "To use a custom CSV network, provide csv_path=..."
+                    )
+                
+                self.network_df = self.network_map[name]
             
             # Populate edges immediately
             self._populate_edges()
+
+        def _load_custom_network_csv(self):
+            """Load and validate a custom edge-list CSV for network creation."""
+            if not os.path.exists(self.csv_path):
+                raise FileNotFoundError(f"Custom network file not found: {self.csv_path}")
+
+            df = pd.read_csv(self.csv_path)
+            return self._normalize_network_dataframe(df, source_desc=f"CSV '{self.csv_path}'")
+
+        def _normalize_network_dataframe(self, df, source_desc="provided dataframe"):
+            """Validate and normalize custom network data into p1/p2/edge_weight columns."""
+            if not isinstance(df, pd.DataFrame):
+                raise TypeError(f"network_df must be a pandas DataFrame, got {type(df)}")
+
+            tmp = df.copy()
+            if 'Unnamed: 0' in tmp.columns:
+                tmp = tmp.drop(columns=['Unnamed: 0'])
+
+            missing_cols = [c for c in [self.p1_col, self.p2_col] if c not in tmp.columns]
+            if missing_cols:
+                raise ValueError(
+                    f"{source_desc} is missing required column(s): {missing_cols}. "
+                    f"Available columns: {list(tmp.columns)}"
+                )
+
+            out = pd.DataFrame({
+                'p1': pd.to_numeric(tmp[self.p1_col], errors='coerce'),
+                'p2': pd.to_numeric(tmp[self.p2_col], errors='coerce'),
+            }).dropna(subset=['p1', 'p2'])
+
+            out['p1'] = out['p1'].astype(np.int64)
+            out['p2'] = out['p2'].astype(np.int64)
+
+            # Keep an edge_weight column for consistency with built-in network dataframes.
+            if self.beta_col is not None:
+                if self.beta_col not in tmp.columns:
+                    raise ValueError(
+                        f"beta_col '{self.beta_col}' not found in {source_desc}. "
+                        f"Available columns: {list(tmp.columns)}"
+                    )
+                beta_vals = pd.to_numeric(tmp[self.beta_col], errors='coerce')
+                beta_vals = beta_vals.loc[out.index].fillna(float(self.edge_weight))
+                out['edge_weight'] = beta_vals.astype(float).values
+            else:
+                out['edge_weight'] = float(self.edge_weight)
+
+            if out.empty:
+                raise ValueError(f"{source_desc} has no valid edges after parsing.")
+
+            return out.reset_index(drop=True)
             
         def _populate_edges(self):
             """Populate network edges from dataframe."""
             self.edges.p1 = self.network_df['p1'].values
             self.edges.p2 = self.network_df['p2'].values
-            self.edges.beta = np.full(len(self.network_df), self.edge_weight)
+            if 'edge_weight' in self.network_df.columns:
+                self.edges.beta = self.network_df['edge_weight'].values.astype(float)
+            else:
+                self.edges.beta = np.full(len(self.network_df), self.edge_weight)
             self.validate()
             
         def _ensure_networks_created(self):
@@ -274,7 +345,7 @@ class ForStarsim:
                 m = mmread(file)
                 mat_data = {'p1': m.col, 'p2': m.row}
                 mat = pd.DataFrame(data=mat_data)
-                mat['beta'] = 1
+                mat['edge_weight'] = 1
                 return mat
             
             # read in matrix files

@@ -141,12 +141,12 @@ def reoptimize(x, rerun, samples, samp_masks, targs, n_hhs, params, rng):
             x[ri] = r
 
 
-def process_counties(data_dir, counties=None, seed=None):
+def process_counties(data_dir, counties=None, random_seed=None):
     """Run CO for all counties. Returns (co_results, co_scores).
     co_results: dict[county_code -> dict[cbg_code -> list[serial_number]]]
     co_scores:  dict[county_code -> dict[cbg_code -> float]]
     """
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(random_seed)
 
     samples, hh_ids = read_samples(data_dir)
     cbg_puma, cbg_county, cbg_cbsa, cbg_urban = read_targ_geo(data_dir)

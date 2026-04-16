@@ -18,7 +18,8 @@ def read_counties(data_dir):
 def read_hh_serials(data_dir):
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'hh_samples.csv'),
                      usecols=['SERIALNO'], dtype={'SERIALNO': str})
-    return dict(zip(df['SERIALNO'], range(len(df))))
+    # Match Julia/DataFrame row numbering (1-based) for exported sample indices.
+    return dict(zip(df['SERIALNO'], range(1, len(df) + 1)))
 
 
 def read_psamp_df(data_dir, ind_codes, additional_traits):
@@ -36,7 +37,8 @@ def people_by_serial(p_samps):
     """Group person sample row indices by household serial number."""
     result = {}
     for idx, serial in enumerate(p_samps['SERIALNO']):
-        result.setdefault(serial, []).append(idx)
+        # Store 1-based row indices to match Julia semantics.
+        result.setdefault(serial, []).append(idx + 1)
     return result
 
 
@@ -160,12 +162,12 @@ def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng)
     return cbgs, gqs, gq_people, gq_summary
 
 
-def generate_people(co_results, data_dir, seed=None):
+def generate_people(co_results, data_dir, random_seed=None):
     """Generate people, households, and group quarters from CO results.
     co_results: dict[county -> dict[cbg_code -> list[serial_numbers]]]
     Returns (cbgs, people, households, gqs, gq_summary).
     """
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(random_seed)
     config = tryJSON(os.path.join(data_dir, 'config.json'))
     additional_traits = config.get('additional_traits', [])
     wp_codes = tryJSON(os.path.join(data_dir, 'processed', 'codes.json'))
@@ -213,7 +215,7 @@ def generate_people(co_results, data_dir, seed=None):
                 p_vec = p_idx.get(hh_serial, [])
                 for p_i_0, r in enumerate(p_vec):
                     p_i = p_i_0 + 1  # 1-based
-                    row = p_samps.iloc[r]
+                    row = p_samps.iloc[r - 1]
                     trait_kwargs = {}
                     for trait in additional_traits:
                         val = row.get(trait)

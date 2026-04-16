@@ -1920,6 +1920,157 @@ class ProcessData:
         self.generate_schools()
         print("All ProcessData() steps complete")
 
+    def quality_check(self, *, auto_print=True):
+        """Run processed geography alignment checks and optionally print a summary.
+
+        The printed summary includes:
+        - `data_dir`: the root data folder (from `config["path"]`) whose `processed/`
+          subdirectory is being checked.
+        - `st_puma_overlap`: how many unique PUMAs appear in the target CBG geography
+          (`target_unique_pumas`), how many appear in the PUMS sample pool
+          (`sample_unique_pumas`), how many target PUMAs are covered by the sample pool
+          (`covered_target_pumas`), and the resulting coverage fraction (`overlap_pct`).
+        - `samp_geo_missingness` / `target_geo_missingness`:, for each key geography
+          field (`st_puma`, `county`, `cbsa`, `R`, `U`), the count and fraction of
+          missing values in the PUMS-side (`samp_geo.csv`) and CBG-side (`cbg_geo.csv`)
+          tables.
+        - `co_readiness_summary`: a coarse status flag (`good` / `warn`) plus notes
+          if PUMA coverage is low or missingness in key fields is high.
+
+        This intentionally reads from `${config['path']}/processed/*` so it works
+        after `auto_run=True` as well.
+        """
+        qc = QualityCheck(config_dict=self.config, base_dir=self.base_dir, auto_run=False)
+        qc._results = qc.run_all()  # ensure we return the same object we print
+        if auto_print:
+            qc.print_results()
+        return qc._results
+
+def _missingness_summary(df, cols):
+    total = len(df)
+    summary = {}
+    for col in cols:
+        if col not in df.columns:
+            summary[col] = {"missing_n": None, "missing_pct": None, "present": False}
+            continue
+        missing_n = int(df[col].isna().sum())
+        summary[col] = {
+            "missing_n": missing_n,
+            "missing_pct": (missing_n / total) if total else 0.0,
+            "present": True,
+        }
+    return summary
+
+
+class QualityCheck:
+    """Validate processed geography alignment before optimization/export."""
+
+    def __init__(self, config_dict=None, config_path=None, base_dir=None, path_override=None, auto_run=True):
+        self.base_dir = base_dir if base_dir is not None else BASE_DIR
+        if config_dict is not None:
+            self.config = config_dict
+        else:
+            cfg_path = config_path if config_path is not None else os.path.join(self.base_dir, "config.json")
+            with open(cfg_path, "r") as f:
+                self.config = json.load(f)
+
+        self.data_dir = path_override if path_override is not None else self.config.get("path", self.base_dir)
+        self.processed_dir = os.path.join(self.data_dir, "processed")
+        self._results = None
+
+        if auto_run:
+            self.run_all()
+
+    def _read_processed(self, filename):
+        path = os.path.join(self.processed_dir, filename)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Processed file not found: {path}")
+        return pd.read_csv(path, dtype=str)
+
+    def run_all(self):
+        cbg_geo = self._read_processed("cbg_geo.csv")
+        samp_geo = self._read_processed("samp_geo.csv")
+
+        target_pumas = set(cbg_geo["st_puma"].dropna().astype(str).unique()) if "st_puma" in cbg_geo.columns else set()
+        sample_pumas = set(samp_geo["st_puma"].dropna().astype(str).unique()) if "st_puma" in samp_geo.columns else set()
+        covered_pumas = target_pumas & sample_pumas
+        missing_pumas = sorted(target_pumas - sample_pumas)
+
+        overlap_pct = (len(covered_pumas) / len(target_pumas)) if target_pumas else 1.0
+
+        self._results = {
+            "data_dir": self.data_dir,
+            "processed_dir": self.processed_dir,
+            "st_puma_overlap": {
+                "target_unique_pumas": len(target_pumas),
+                "sample_unique_pumas": len(sample_pumas),
+                "covered_target_pumas": len(covered_pumas),
+                "overlap_pct": overlap_pct,
+                "missing_target_pumas": missing_pumas,
+            },
+            "samp_geo_missingness": _missingness_summary(samp_geo, ["st_puma", "county", "cbsa", "R", "U"]),
+            "target_geo_missingness": _missingness_summary(cbg_geo, ["st_puma", "county", "cbsa", "R", "U"]),
+        }
+
+        notes = []
+        status = "good"
+        if overlap_pct < 0.95:
+            status = "warn"
+            notes.append(
+                "Target CBG PUMA coverage in sample pool is below 95%; "
+                "county/cbsa/urban fallback may be used more often."
+            )
+
+        samp_missing = self._results["samp_geo_missingness"]
+        for field in ["cbsa", "county", "R", "U"]:
+            info = samp_missing.get(field, {})
+            if info.get("present") and info.get("missing_pct", 0) > 0.05:
+                status = "warn"
+                notes.append(f"Sample geography field '{field}' has >5% missingness.")
+
+        self._results["co_readiness_summary"] = {"status": status, "notes": notes}
+        return self._results
+
+    @property
+    def results(self):
+        if self._results is None:
+            self.run_all()
+        self.print_results()
+        return self._results
+
+    def print_results(self):
+        if self._results is None:
+            self.run_all()
+        res = self._results
+        print("QualityCheck results")
+        print(f"data_dir: {res['data_dir']}")
+        print("")
+
+        overlap = res["st_puma_overlap"]
+        print("st_puma_overlap")
+        print(f"  target_unique_pumas: {overlap['target_unique_pumas']}")
+        print(f"  sample_unique_pumas: {overlap['sample_unique_pumas']}")
+        print(f"  covered_target_pumas: {overlap['covered_target_pumas']}")
+        print(f"  overlap_pct: {overlap['overlap_pct']:.3f}")
+        if overlap["missing_target_pumas"]:
+            print(f"  missing_target_pumas: {overlap['missing_target_pumas']}")
+        print("")
+
+        for section in ["samp_geo_missingness", "target_geo_missingness"]:
+            print(section)
+            for field, info in res[section].items():
+                if not info["present"]:
+                    print(f"  {field}: column missing")
+                else:
+                    print(f"  {field}: missing_n={info['missing_n']}, missing_pct={info['missing_pct']:.3f}")
+            print("")
+
+        summary = res["co_readiness_summary"]
+        print("co_readiness_summary")
+        print(f"  status: {summary['status']}")
+        for note in summary["notes"]:
+            print(f"  - {note}")
+
 def main():
     runner = ProcessData(auto_run=False)
     runner.run_all()

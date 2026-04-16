@@ -177,12 +177,12 @@ def _read_gq_ppl(gqs, gq_workers_raw):
 
 
 def generate_networks(people, households, gqs, sch_students, company_workers,
-                      sch_workers, gq_workers, outside_workers, dummies, config, seed=None):
+                      sch_workers, gq_workers, outside_workers, dummies, config, random_seed=None):
     """Generate all contact networks.
     Returns (adj_hh, adj_non_hh, adj_wp, adj_sch, adj_gq,
              adj_mat_keys, adj_dummy_keys, adj_out_workers).
     """
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(random_seed)
     work_K = config.get('workplace_K', 8)
     school_K = config.get('school_K', 12)
     gq_K = config.get('gq_K', 12)
