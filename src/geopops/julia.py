@@ -1,3 +1,11 @@
+"""
+Legacy Julia execution path for GeoPops.
+
+This module is kept for backward compatibility. The active implementation
+has been migrated to pure Python modules and should be used via
+`geopops.GeneratePop`.
+"""
+
 import os
 import subprocess
 import json

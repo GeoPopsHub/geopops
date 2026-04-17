@@ -6,7 +6,6 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 import json
-import os
 
 
 def tryJSON(filename):
@@ -19,7 +18,7 @@ def tryJSON(filename):
 
 @dataclass
 class PersonData:
-    hh: tuple           # (hh_num, cbg_index)
+    hh: tuple
     sample: int
     age: int
     working: bool
@@ -38,17 +37,16 @@ class PersonData:
 @dataclass
 class Household:
     sample: int
-    people: list        # list of Pkey = (p_num, hh_num, cbg_key)
+    people: list
 
 
 @dataclass
 class GQres:
     type: str
-    residents: list     # list of Pkey
+    residents: list
 
 
 class Indexer:
-    """Auto-assigns sequential 1-based integer IDs to new dict keys."""
     def __init__(self):
         self.i = 0
 
@@ -61,7 +59,6 @@ class Indexer:
 
 
 def lrRound(v):
-    """Round a 1-D array to integers preserving sum (largest-remainder method)."""
     v = np.asarray(v, dtype=float)
     vrnd = np.floor(v).astype(np.int64)
     verr = v - vrnd
@@ -74,13 +71,11 @@ def lrRound(v):
 
 
 def lrRound_matrix(m):
-    """Round a matrix to integers preserving total sum."""
     shape = m.shape
     return lrRound(m.ravel()).reshape(shape)
 
 
 def rowRound(m):
-    """Round each row of a matrix preserving row sums."""
     res = np.zeros(m.shape, dtype=np.int64)
     for i in range(m.shape[0]):
         res[i, :] = lrRound(m[i, :])
@@ -88,7 +83,6 @@ def rowRound(m):
 
 
 def colRound(m):
-    """Round each column of a matrix preserving column sums."""
     res = np.zeros(m.shape, dtype=np.int64)
     for j in range(m.shape[1]):
         res[:, j] = lrRound(m[:, j])
@@ -96,9 +90,6 @@ def colRound(m):
 
 
 def ranges(vec):
-    """Continuous 1-based index ranges with lengths given by vec.
-    Returns list of (start, end) tuples (1-based, inclusive).
-    """
     vec = [int(x) for x in vec]
     x = np.cumsum(vec)
     starts = np.concatenate([[1], x[:-1] + 1]).astype(int)
@@ -106,9 +97,6 @@ def ranges(vec):
 
 
 def drawCounts(v, n=1, rng=None):
-    """Sample n indices from a vector of counts (weighted), depleting counts in-place.
-    v is modified in place. Returns list of drawn indices.
-    """
     if rng is None:
         rng = np.random.default_rng()
     result = []
@@ -125,12 +113,10 @@ def drawCounts(v, n=1, rng=None):
 
 
 def thresh(x, v):
-    """Replace x with 0 if x < v."""
     return 0 if x < v else x
 
 
 def vecmerge(*dicts):
-    """Merge dicts whose values are lists, concatenating values for shared keys."""
     result = {}
     for d in dicts:
         for k, v in d.items():
@@ -142,7 +128,6 @@ def vecmerge(*dicts):
 
 
 def dflat(d):
-    """Flatten a dict of {key: [values]} into [(key, value), ...]."""
     result = []
     for k, vlist in d.items():
         for v in vlist:
@@ -151,7 +136,6 @@ def dflat(d):
 
 
 def first_true(bools):
-    """Index of first True in a sequence, or None."""
     for i, b in enumerate(bools):
         if b:
             return i

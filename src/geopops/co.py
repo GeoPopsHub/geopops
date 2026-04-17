@@ -34,7 +34,6 @@ def anneal(all_samples, mask, targ, n, params, rng):
 
     while True:
         gen += 1
-        # mutate
         cidx = rng.integers(len(c0))
         orig = c0[cidx]
         c0[cidx] = rng.integers(n_samples)
@@ -142,10 +141,7 @@ def reoptimize(x, rerun, samples, samp_masks, targs, n_hhs, params, rng):
 
 
 def process_counties(data_dir, counties=None, random_seed=None):
-    """Run CO for all counties. Returns (co_results, co_scores).
-    co_results: dict[county_code -> dict[cbg_code -> list[serial_number]]]
-    co_scores:  dict[county_code -> dict[cbg_code -> float]]
-    """
+    """Run CO for all counties. Returns (co_results, co_scores)."""
     rng = np.random.default_rng(random_seed)
 
     samples, hh_ids = read_samples(data_dir)
@@ -178,8 +174,6 @@ def process_counties(data_dir, counties=None, random_seed=None):
         n_hhs = [n_hhs_all[i] for i in idxs]
 
         print(f"\nCounty {c}: {len(geos)} CBGs")
-
-        # PUMA level
         print("  puma")
         samp_masks = sample_lookup(samp_geo, 'st_puma', [cbg_puma[g] for g in geos])
         x = optimize(samples, samp_masks, targs, n_hhs, params, rng)
@@ -188,7 +182,6 @@ def process_counties(data_dir, counties=None, random_seed=None):
         print(f"  county {c}: {len(x)} targets; {n_bad} above threshold (will rerun); "
               f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
-        # County level retry
         print("  county")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
         print(f"  county pass: {len(rerun)} targets to rerun")
@@ -200,7 +193,6 @@ def process_counties(data_dir, counties=None, random_seed=None):
         print(f"  after county: {n_bad} still above threshold; "
               f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
-        # CBSA level retry
         print("  cbsa")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
         print(f"  cbsa pass: {len(rerun)} targets to rerun")
@@ -212,7 +204,6 @@ def process_counties(data_dir, counties=None, random_seed=None):
         print(f"  after cbsa: {n_bad} still above threshold; "
               f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
-        # Urbanization level retry (slower cooldown)
         print("  urbanization")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
         print(f"  urb pass: {len(rerun)} targets to rerun")
@@ -225,7 +216,6 @@ def process_counties(data_dir, counties=None, random_seed=None):
         print(f"  after urb: {n_bad} still above threshold; "
               f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
-        # Store results: cbg_code -> list of household serial numbers
         co_results_county = {}
         co_scores_county = {}
         for i, geo in enumerate(geos):

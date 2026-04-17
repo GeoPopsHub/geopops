@@ -7,7 +7,7 @@ import pandas as pd
 import os
 from scipy import sparse
 from .utils import tryJSON, lrRound, lrRound_matrix, rowRound, drawCounts, vecmerge
-from ..ipfn import ipfn as IPFN
+from .ipfn import ipfn as IPFN
 
 
 def split_lognormal(n, mu, sigma, draws, rng):

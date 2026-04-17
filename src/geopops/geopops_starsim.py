@@ -28,7 +28,7 @@ class ForStarsim:
             config_path: Optional path to a JSON config file. Defaults to config.json in package directory.
             base_dir: Optional base dir to use for relative paths. Defaults to package directory.
         """
-        # Use package directory as base, same as census.py
+        # Use package directory as base, same as process_data.py
         self.base_dir = base_dir if base_dir is not None else BASE_DIR
         
         if config_dict is not None:
@@ -58,7 +58,7 @@ class ForStarsim:
                 config_path: Optional path to a JSON config file. Defaults to config.json in package directory.
                 base_dir: Optional base dir to use for relative paths. Defaults to package directory.
             """
-            # Use package directory as base, same as census.py
+            # Use package directory as base, same as process_data.py
             self.base_dir = base_dir if base_dir is not None else BASE_DIR
             
             if config_dict is not None:

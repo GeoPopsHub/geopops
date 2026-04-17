@@ -7,12 +7,29 @@ load_dotenv(find_dotenv())
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def load_config():
-    cfg_path = os.path.join(BASE_DIR, "config.json")
-    # if not os.path.exists(cfg_path):
-    #     raise FileNotFoundError(f"config.json file not found at {cfg_path}. Please create this file with the required configuration.")
+def _merge_dict(base, override):
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _merge_dict(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
+def load_config(base_dir=None):
+    cfg_dir = base_dir if base_dir is not None else BASE_DIR
+    cfg_path = os.path.join(cfg_dir, "config.json")
     with open(cfg_path, "r") as f:
-        return json.load(f)
+        config = json.load(f)
+
+    # Optional untracked local overrides for machine-specific values.
+    local_cfg_path = os.path.join(cfg_dir, "config.local.json")
+    if os.path.exists(local_cfg_path):
+        with open(local_cfg_path, "r") as f:
+            local_cfg = json.load(f)
+        config = _merge_dict(config, local_cfg)
+
+    return config
 
 
 def save_config(config, config_path=None):
@@ -84,7 +101,7 @@ class WriteConfig:
                 self.path = path
         else:
             self.path = self.template_config_path
-        self.config = config_dict if config_dict is not None else load_config()
+        self.config = config_dict if config_dict is not None else load_config(self.base_dir)
         self.overrides = {
             "census_api_key": census_api_key,
             "main_year": main_year,

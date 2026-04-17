@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geopops"
-version = "0.1.4.post2"
+version = "0.1.5"
 description = "GeoPops"
 readme = "README.md"
 requires-python = ">=3.11"

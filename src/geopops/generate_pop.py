@@ -7,12 +7,13 @@ import json
 import numpy as np
 from . import co, households, schools, workplaces, networks, export
 
-# Parent package directory (src/geopops/) where config.json lives
-PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Package directory (src/geopops/) where config.json lives
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def load_config():
-    config_path = os.path.join(PACKAGE_DIR, "config.json")
+def load_config(base_dir=None):
+    cfg_dir = base_dir if base_dir is not None else PACKAGE_DIR
+    config_path = os.path.join(cfg_dir, "config.json")
     with open(config_path, "r") as f:
         return json.load(f)
 
@@ -22,16 +23,19 @@ class GeneratePop:
     Same API as RunJulia: CO(), SynthPop(), Export(), run_all().
     """
 
-    def __init__(self, output_dir=None, random_seed=None):
-        config = load_config()
+    def __init__(self, config_dict=None, base_dir=None, output_dir=None,
+                 random_seed=None, verbose=1, auto_run=False, run_all=None):
+        self.verbose = verbose
+        self.base_dir = base_dir if base_dir is not None else PACKAGE_DIR
+        config = config_dict if config_dict is not None else load_config(self.base_dir)
         if output_dir is not None:
             self.data_dir = output_dir
         else:
-            self.data_dir = config.get("path", PACKAGE_DIR)
+            self.data_dir = config.get("path", self.base_dir)
         self.config = config
         self.random_seed = random_seed if random_seed is not None else config.get("random_seed")
         self._stage_random_seeds = self._make_stage_random_seeds(self.random_seed)
-        print(f"Using data directory: {self.data_dir}")
+        self._log(f"Using data directory: {self.data_dir}")
 
         # Pipeline state (populated by each stage)
         self.co_results = None
@@ -56,6 +60,15 @@ class GeneratePop:
         self.adj_dummy_keys = None
         self.adj_out_workers = None
 
+        if run_all is not None:
+            auto_run = run_all
+        if auto_run:
+            self.run_all()
+
+    def _log(self, msg):
+        if self.verbose:
+            print(msg)
+
     @staticmethod
     def _make_stage_random_seeds(random_seed):
         """Derive deterministic per-stage seeds from one master random seed."""
@@ -76,9 +89,9 @@ class GeneratePop:
 
     def CO(self):
         """Run combinatorial optimization."""
-        print("=" * 60)
-        print("Running combinatorial optimization")
-        print("=" * 60)
+        self._log("=" * 60)
+        self._log("Running combinatorial optimization")
+        self._log("=" * 60)
         self.co_results, self.co_scores = co.process_counties(
             self.data_dir, random_seed=self._stage_random_seeds["co"])
 
@@ -87,24 +100,24 @@ class GeneratePop:
         if self.co_results is None:
             raise RuntimeError("CO() must be run before SynthPop()")
 
-        print("=" * 60)
-        print("Creating people, households, and group quarters")
-        print("=" * 60)
+        self._log("=" * 60)
+        self._log("Creating people, households, and group quarters")
+        self._log("=" * 60)
         self.cbgs, self.people, self.households, self.gqs, self.gq_summary = \
             households.generate_people(
                 self.co_results, self.data_dir,
                 random_seed=self._stage_random_seeds["households"])
 
-        print("=" * 60)
-        print("Creating schools")
-        print("=" * 60)
+        self._log("=" * 60)
+        self._log("Creating schools")
+        self._log("=" * 60)
         self.sch_students = schools.generate_schools(
             self.people, self.cbgs, self.data_dir,
             random_seed=self._stage_random_seeds["schools"])
 
-        print("=" * 60)
-        print("Creating workplaces")
-        print("=" * 60)
+        self._log("=" * 60)
+        self._log("Creating workplaces")
+        self._log("=" * 60)
         (self.company_workers, self.sch_workers, self.gq_workers,
          self.outside_workers, self.dummies) = \
             workplaces.generate_jobs_and_workers(
@@ -112,9 +125,9 @@ class GeneratePop:
                 self.co_results, self.gq_summary, self.data_dir,
                 random_seed=self._stage_random_seeds["workplaces"])
 
-        print("=" * 60)
-        print("Creating networks")
-        print("=" * 60)
+        self._log("=" * 60)
+        self._log("Creating networks")
+        self._log("=" * 60)
         (self.adj_hh, self.adj_non_hh, self.adj_wp, self.adj_sch, self.adj_gq,
          self.adj_mat_keys, self.adj_dummy_keys, self.adj_out_workers) = \
             networks.generate_networks(
@@ -123,22 +136,22 @@ class GeneratePop:
                 self.outside_workers, self.dummies, self.config,
                 random_seed=self._stage_random_seeds["networks"])
 
-        print("done with SynthPop")
+        self._log("done with SynthPop")
 
     def Export(self):
         """Export population and networks to CSV/MTX files."""
         if self.people is None:
             raise RuntimeError("SynthPop() must be run before Export()")
 
-        print("=" * 60)
-        print("Exporting population data")
-        print("=" * 60)
+        self._log("=" * 60)
+        self._log("Exporting population data")
+        self._log("=" * 60)
         export.export_synthpop(
             self.data_dir, self.cbgs, self.households, self.people,
             self.sch_students, self.sch_workers, self.gqs,
             self.gq_workers, self.company_workers, self.outside_workers)
 
-        print("Exporting network data")
+        self._log("Exporting network data")
         export.export_networks(
             self.data_dir, self.adj_hh, self.adj_non_hh, self.adj_wp,
             self.adj_sch, self.adj_gq, self.adj_mat_keys,
@@ -150,6 +163,3 @@ class GeneratePop:
         self.SynthPop()
         self.Export()
 
-
-# Backward-compatible alias
-RunPython = GeneratePop

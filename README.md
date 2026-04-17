@@ -19,13 +19,8 @@ There are many packages for generating agents and households from Census data, b
 ## Get involved
 GeoPops is in development and we welcome feedback! Get in touch if you've tried making a population of your own or want to become a member. You can upload your own example as a respository in the [GeoPopsHub](https://github.com/GeoPopsHub).
 
-## Tutorial
-See the repo [sc_spartanburg_measles](https://github.com/GeoPopsHub/sc_spartanburg_measles) for a detailed example of how to build a population, simulate a disease, test out interventions, and track outcomes by subgroup. [`1_run_geopops.ipynb`](https://github.com/GeoPopsHub/sc_spartanburg_measles/blob/main/1_run_geopops.ipynb) has instructions on how to build a GeoPops population.
-
-## Quick start
-1. Install: `pip install geopops`
-2. Get a [US Census API key](https://api.census.gov/data/key_signup.html) and set as the environment variable `CENSUS_API_KEY`
-3. See `tests/test_python_workflow.py` for the full workflow (NB: this workflow does not require Julia installation)
+## How to use
+[`1_run_geopops.ipynb`](https://github.com/GeoPopsHub/sc_spartanburg_measles/blob/main/1_run_geopops.ipynb) has instructions on how to build a GeoPops population. See the repo [sc_spartanburg_measles](https://github.com/GeoPopsHub/sc_spartanburg_measles) for a detailed example of how to build a population, simulate a disease, test out interventions, and track outcomes by subgroup. 
 
 ## Support
 GeoPops is a collaboration between the following institutions:

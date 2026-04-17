@@ -18,7 +18,6 @@ def read_counties(data_dir):
 def read_hh_serials(data_dir):
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'hh_samples.csv'),
                      usecols=['SERIALNO'], dtype={'SERIALNO': str})
-    # Match Julia/DataFrame row numbering (1-based) for exported sample indices.
     return dict(zip(df['SERIALNO'], range(1, len(df) + 1)))
 
 
@@ -34,16 +33,13 @@ def read_psamp_df(data_dir, ind_codes, additional_traits):
 
 
 def people_by_serial(p_samps):
-    """Group person sample row indices by household serial number."""
     result = {}
     for idx, serial in enumerate(p_samps['SERIALNO']):
-        # Store 1-based row indices to match Julia semantics.
         result.setdefault(serial, []).append(idx + 1)
     return result
 
 
 def _row_gq_employment(n, jobtype, ind_codes, row):
-    """Number employed by industry for a GQ row."""
     if jobtype == 'none' or n < 1:
         return [0] * len(ind_codes)
     prefix = 'civ_ind_' if jobtype == 'civ' else 'mil_ind_'
@@ -51,9 +47,6 @@ def _row_gq_employment(n, jobtype, ind_codes, row):
 
 
 def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng):
-    """Generate group quarters residents.
-    Returns (cbgs, gqs, gq_people, gq_summary_df).
-    """
     min_gq_residents = config.get('min_gq_residents', 20)
     add_trait_cols = config.get('additional_traits', [])
 
@@ -71,20 +64,17 @@ def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng)
     assumed_ages = [15, 30, 30, 30, 75]
     job_types = ['none', 'none', 'civ', 'mil', 'none']
 
-    # Compute populations for each GQ type
     df_gq['pop_instu18'] = (df_gq['group quarters:under 18'] * df_gq['p_u18_inst']).apply(lambda x: thresh(int(round(x)), min_gq_residents))
     df_gq['pop_inst1864'] = (df_gq['group quarters:18 to 64'] * df_gq['p_18_64_inst']).apply(lambda x: thresh(int(round(x)), min_gq_residents))
     df_gq['pop_ninst1864civ'] = (df_gq['group quarters:18 to 64'] * df_gq['p_18_64_noninst_civil']).apply(lambda x: thresh(int(round(x)), min_gq_residents))
     df_gq['pop_milGQ'] = (df_gq['group quarters:18 to 64'] * df_gq['p_18_64_noninst_mil']).apply(lambda x: thresh(int(round(x)), min_gq_residents))
     df_gq['pop_inst65o'] = (df_gq['group quarters:65 and over'] * df_gq['p_65o_inst']).apply(lambda x: thresh(int(round(x)), min_gq_residents))
 
-    # Read GQ worker counts by industry
     df_civil = pd.read_csv(os.path.join(data_dir, 'processed', 'gq_civilian_workers.csv'), dtype={'Geo': str})
     df_civil.columns = [c.replace('C24030:', 'civ_ind_').replace('C24010:', 'civ_occ_') for c in df_civil.columns]
     df_mil = pd.read_csv(os.path.join(data_dir, 'processed', 'gq_military_workers.csv'), dtype={'Geo': str})
     df_mil.columns = [c.replace('C24030:', 'mil_ind_').replace('C24010:', 'mil_occ_') for c in df_mil.columns]
 
-    # Commuter and income probabilities
     df_gq['commuter_p|civ_worker'] = df_gq['commuter_p|ninst1864civ'] / (df_gq['commuter_p|ninst1864civ'] + df_gq['work_from_home_p|ninst1864civ'])
     df_gq['commuter_p|mil_worker'] = df_gq['commuter_p|milGQ'] / (df_gq['commuter_p|milGQ'] + df_gq['work_from_home_p|milGQ'])
     df_gq['LODES_high|civ_commuter'] = df_gq['com_LODES_high_p|ninst1864civ'] / (df_gq['com_LODES_high_p|ninst1864civ'] + df_gq['com_LODES_low_p|ninst1864civ'])
@@ -136,7 +126,6 @@ def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng)
                         **{trait: None for trait in add_trait_cols}
                     )
 
-    # Build GQ summary dataframe for workplaces module
     summary_rows = []
     for _, row in df_gq.iterrows():
         geo = row['Geo']
@@ -163,10 +152,6 @@ def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng)
 
 
 def generate_people(co_results, data_dir, random_seed=None):
-    """Generate people, households, and group quarters from CO results.
-    co_results: dict[county -> dict[cbg_code -> list[serial_numbers]]]
-    Returns (cbgs, people, households, gqs, gq_summary).
-    """
     rng = np.random.default_rng(random_seed)
     config = tryJSON(os.path.join(data_dir, 'config.json'))
     additional_traits = config.get('additional_traits', [])
@@ -181,15 +166,11 @@ def generate_people(co_results, data_dir, random_seed=None):
     p_idx = people_by_serial(p_samps)
 
     ind_colnames = ['ind_' + k for k in ind_codes]
-    ind_col_idxs = {name: i for i, name in enumerate(ind_colnames)}
-
-    # Pre-compute industry category for each person sample
     p_samps['ind_code'] = p_samps[ind_colnames].apply(
         lambda row: first_true(row.values), axis=1)
     p_samps['com_cat'] = p_samps.apply(
         lambda row: (row['ind_code'] + 1) if (row['commuter'] and row['ind_code'] is not None) else None, axis=1)
 
-    # Income categories
     income_cols = ['com_LODES_low', 'com_LODES_high']
     p_samps['income_code'] = p_samps[income_cols].apply(
         lambda row: first_true(row.values), axis=1)
@@ -210,11 +191,11 @@ def generate_people(co_results, data_dir, random_seed=None):
         for cbg_code, hh_vec in cbg_hhs.items():
             cbg_i = cbg_indexer(cbgs, cbg_code)
             for hh_i_0, hh_serial in enumerate(hh_vec):
-                hh_i = hh_i_0 + 1  # 1-based
+                hh_i = hh_i_0 + 1
                 hh_key = (hh_i, cbg_i)
                 p_vec = p_idx.get(hh_serial, [])
                 for p_i_0, r in enumerate(p_vec):
-                    p_i = p_i_0 + 1  # 1-based
+                    p_i = p_i_0 + 1
                     row = p_samps.iloc[r - 1]
                     trait_kwargs = {}
                     for trait in additional_traits:
