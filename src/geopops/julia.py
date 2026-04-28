@@ -65,6 +65,7 @@ class RunJulia:
     
     def CO(self):
         """Run the CO.jl Julia script."""
+        print("*** Running RunJulia.CO() ***")
         subprocess.run([
             *self.julia_cmd,
             f"--project={self.julia_env_path}",
@@ -73,7 +74,7 @@ class RunJulia:
         
     def SynthPop(self):
         """Run the synthpop.jl Julia script."""
-        print("Running synthpop.jl...")
+        print("\n*** Running RunJulia.SynthPop() ***")
         try:
             result = subprocess.run([
                 *self.julia_cmd,
@@ -92,6 +93,7 @@ class RunJulia:
         
     def Export(self):
         """Run the export_synthpop.jl and the export_network.jl Julia scripts."""
+        print("\n*** Running RunJulia.Export() ***")
         subprocess.run([
             *self.julia_cmd,
             f"--project={self.julia_env_path}",
@@ -105,6 +107,9 @@ class RunJulia:
     
     def run_all(self):
         """Run all Julia scripts in sequence."""
+        print("============================================================")
+        print("Running RunJulia()")
+        print("============================================================")
         self.CO()
         self.SynthPop()
         self.Export()

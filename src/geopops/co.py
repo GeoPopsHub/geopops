@@ -174,46 +174,44 @@ def process_counties(data_dir, counties=None, random_seed=None):
         n_hhs = [n_hhs_all[i] for i in idxs]
 
         print(f"\nCounty {c}: {len(geos)} CBGs")
-        print("  puma")
+        print("")
+        print(f"Optimizing {len(geos)} CBGs at PUMA level")
         samp_masks = sample_lookup(samp_geo, 'st_puma', [cbg_puma[g] for g in geos])
         x = optimize(samples, samp_masks, targs, n_hhs, params, rng)
         scores = [a[2] for a in x]
         n_bad = sum(1 for s in scores if s > c_val)
-        print(f"  county {c}: {len(x)} targets; {n_bad} above threshold (will rerun); "
+        print(f"-- After PUMA pass; {n_bad} above threshold (will rerun); "
               f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
-        print("  county")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
-        print(f"  county pass: {len(rerun)} targets to rerun")
+        print(f"Optimizing {len(rerun)} CBG(s) at county level")
         if rerun:
             re_masks = sample_lookup(samp_geo, 'county', [cbg_county[geos[i]] for i in rerun])
             reoptimize(x, rerun, samples, re_masks, targs, n_hhs, params, rng)
         scores = [a[2] for a in x]
         n_bad = sum(1 for s in scores if s > c_val)
-        print(f"  after county: {n_bad} still above threshold; "
+        print(f"-- After county pass: {n_bad} still above threshold; "
               f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
-        print("  cbsa")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
-        print(f"  cbsa pass: {len(rerun)} targets to rerun")
+        print(f"Optimizing {len(rerun)} CBG(s) at CBSA level")
         if rerun:
             re_masks = sample_lookup(samp_geo, 'cbsa', [cbg_cbsa[geos[i]] for i in rerun])
             reoptimize(x, rerun, samples, re_masks, targs, n_hhs, params, rng)
         scores = [a[2] for a in x]
         n_bad = sum(1 for s in scores if s > c_val)
-        print(f"  after cbsa: {n_bad} still above threshold; "
+        print(f"-- After CBSA pass: {n_bad} still above threshold; "
               f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
-        print("  urbanization")
         rerun = [i for i, r in enumerate(x) if r[2] > c_val]
-        print(f"  urb pass: {len(rerun)} targets to rerun")
+        print(f"Optimizing {len(rerun)} CBG(s) at urbanization level")
         if rerun:
             params_slow = dict(maxgens=CO_maxgens, critval=c_val, cooldown=CO_cooldown_slow)
             re_masks = sample_lookup(samp_geo, 'U', [cbg_urban[geos[i]] for i in rerun])
             reoptimize(x, rerun, samples, re_masks, targs, n_hhs, params_slow, rng)
         scores = [a[2] for a in x]
         n_bad = sum(1 for s in scores if s > c_val)
-        print(f"  after urb: {n_bad} still above threshold; "
+        print(f"-- After urbanization pass: {n_bad} still above threshold; "
               f"E0 min/mean/max: {min(scores):.2f} / {sum(scores)/len(scores):.2f} / {max(scores):.2f}")
 
         co_results_county = {}
@@ -227,6 +225,7 @@ def process_counties(data_dir, counties=None, random_seed=None):
         all_co_scores[c] = co_scores_county
 
         n_good = sum(1 for s in co_scores_county.values() if s <= c_val)
-        print(f"  {n_good}/{len(geos)} CBGs met criterion ({c_val})")
+        print("")
+        print(f"{n_good}/{len(geos)} CBGs met the stopping criterion (E0 <= {c_val}) for the Freeman-Tukey distance score.")
 
     return all_co_results, all_co_scores

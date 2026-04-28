@@ -143,7 +143,6 @@ def calc_od_counts(ind_codes, counties, co_results, gq_summary, data_dir):
     n_cols = len(dest_labels)
     origin_idx = {o: i for i, o in enumerate(origin_labels)}
 
-    print("reading worker counts")
     hhw = read_workers_by_cat(co_results, data_dir, ind_codes, counties)
     gqw = read_gq_workers_by_cat(gq_summary, ind_codes)
 
@@ -151,7 +150,6 @@ def calc_od_counts(ind_codes, counties, co_results, gq_summary, data_dir):
     for k in ind_codes:
         hhw[k]['outside'] = outside[k]
 
-    print("calculating origin-destination counts")
     od_counts_by_cat = {}
     for k in ind_codes:
         M = read_od_matrix(data_dir, k, n_rows, n_cols).toarray()
@@ -322,7 +320,6 @@ def generate_commute_matrices(data_dir):
     """Generate per-industry OD proportion matrices using IPF.
     Writes results to processed/od_*.csv.gz. Called before generate_jobs_and_workers.
     """
-    print("generating commute matrices")
     wp_codes = tryJSON(os.path.join(data_dir, 'processed', 'codes.json'))
     ind_codes = wp_codes.get('ind_codes', [])
 
@@ -349,8 +346,6 @@ def generate_commute_matrices(data_dir):
     res_iod = [sparse.lil_matrix((n_ori, n_dest), dtype=np.float32) for _ in ind_codes]
 
     for o in range(n_ori):
-        if o % 100 == 0:
-            print(f"  {o}/{n_ori}")
 
         ind_margin = m_ind_ori[:, o].astype(float)
         dest_col = m_dest_ori[:, o].toarray().ravel()
@@ -390,7 +385,6 @@ def generate_commute_matrices(data_dir):
             res_iod[i][o, d_idxs] = new_m[i, :]
 
     # Write results
-    print("writing commute matrices")
     proc_dir = os.path.join(data_dir, 'processed')
     pd.DataFrame({'idx': range(1, n_ori + 1), 'origin': origin_idxs}).to_csv(
         os.path.join(proc_dir, 'od_rows_origins.csv'), index=False)
@@ -416,7 +410,6 @@ def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_di
     cbgs_inv = {v: k for k, v in cbgs.items()}
     counties = sorted(set(v[:5] for v in cbgs.keys()))
 
-    print("reading commuters in synth pop")
     worker_keys = group_commuters_by_origin(people, cbgs, ind_codes, rng)
     dummy_fn = DummyGenerator()
 
@@ -440,7 +433,6 @@ def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_di
     all_dummies = []
 
     for ckey in ind_codes:
-        print(f"generating workplaces for category {ckey}")
 
         workers_by_origin = worker_keys[ckey]
         cidx_by_origin = {k: 0 for k in workers_by_origin}
@@ -480,7 +472,6 @@ def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_di
             workers_by_origin, cidx_by_origin, dummy_fn, rng)
         all_outside_workers[ckey] = ow
 
-        print(f"  assigned {sum(len(v) for v in cw.values())} to companies")
 
     # Merge across categories
     company_workers = {}
@@ -498,11 +489,5 @@ def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_di
     outside_workers = {}
     for cat_workers in all_outside_workers.values():
         outside_workers.update(cat_workers)
-
-    print(f"\n  total: {sum(len(v) for v in company_workers.values())} company workers, "
-          f"{sum(len(v) for v in sch_workers.values())} school workers, "
-          f"{sum(len(v) for v in gq_workers_out.values())} GQ workers, "
-          f"{sum(len(v) for v in outside_workers.values())} outside workers, "
-          f"{len(all_dummies)} dummies")
 
     return company_workers, sch_workers, gq_workers_out, outside_workers, all_dummies

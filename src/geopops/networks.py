@@ -216,22 +216,18 @@ def generate_networks(people, households, gqs, sch_students, company_workers,
     all_idxs = dict(p_idxs)
     all_idxs.update(dummy_idxs)
 
-    print("  workplace networks (SBM)")
     adj_wp = sp_from_groups(
         lambda v: connect_SBM(v, work_K, work_K + 2, work_assoc, True, rng),
         cw_groups, all_idxs)
 
-    print("  school networks (SBM)")
     adj_sch = sp_from_groups(
         lambda v: connect_SBM(v, school_K, school_K + 2, sch_assoc, True, rng),
         ppl_in_schools, all_idxs)
 
-    print("  GQ networks (small-world)")
     adj_gq = sp_from_groups(
         lambda v: connect_small_world(v, gq_K, gq_K + 2, sm_world_B, rng),
         ppl_in_gq, all_idxs)
 
-    print("  household networks (complete)")
     adj_hh = sp_from_groups(connect_complete, ppl_in_hhs, all_idxs)
 
     adj_non_hh = (adj_wp + adj_sch + adj_gq).astype(bool)

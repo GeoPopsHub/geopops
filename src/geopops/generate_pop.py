@@ -5,6 +5,7 @@ Calls co, households, schools, workplaces, networks, and export modules.
 import os
 import json
 import numpy as np
+from collections import defaultdict
 from . import co, households, schools, workplaces, networks, export
 
 # Package directory (src/geopops/) where config.json lives
@@ -35,7 +36,6 @@ class GeneratePop:
         self.config = config
         self.random_seed = random_seed if random_seed is not None else config.get("random_seed")
         self._stage_random_seeds = self._make_stage_random_seeds(self.random_seed)
-        self._log(f"Using data directory: {self.data_dir}")
 
         # Pipeline state (populated by each stage)
         self.co_results = None
@@ -89,45 +89,142 @@ class GeneratePop:
 
     def CO(self):
         """Run combinatorial optimization."""
-        self._log("=" * 60)
-        self._log("Running combinatorial optimization")
-        self._log("=" * 60)
+        self._log("*** Running GeneratePop.CO() ***")
         self.co_results, self.co_scores = co.process_counties(
             self.data_dir, random_seed=self._stage_random_seeds["co"])
+
+    def _county_from_cbg_idx(self, cbg_idx):
+        cbg_code = self._cbg_by_idx.get(cbg_idx)
+        return cbg_code[:5] if cbg_code else None
+
+    def _log_people_households_summary(self):
+        people_by_county = defaultdict(int)
+        hh_by_county = defaultdict(int)
+        for person_key in self.people:
+            county = self._county_from_cbg_idx(person_key[2])
+            if county is not None:
+                people_by_county[county] += 1
+        for hh_key in self.households:
+            county = self._county_from_cbg_idx(hh_key[1])
+            if county is not None:
+                hh_by_county[county] += 1
+        for county in sorted(set(people_by_county) | set(hh_by_county)):
+            self._log(f"-- County {county}: {people_by_county[county]} people, {hh_by_county[county]} households")
+        self._log(f"-- Total: {len(self.people)} people, {len(self.households)} households")
+
+    def _log_group_quarters_summary(self):
+        gq_people_by_county = defaultdict(int)
+        gq_by_county = defaultdict(int)
+        for person_key in self.people:
+            if person_key[1] != 0:
+                continue
+            county = self._county_from_cbg_idx(person_key[2])
+            if county is not None:
+                gq_people_by_county[county] += 1
+        for gq_key in self.gqs:
+            county = self._county_from_cbg_idx(gq_key[1])
+            if county is not None:
+                gq_by_county[county] += 1
+        for county in sorted(set(gq_people_by_county) | set(gq_by_county)):
+            self._log(
+                f"-- County {county}: {gq_people_by_county[county]} group quarters residents, {gq_by_county[county]} group quarters"
+            )
+        self._log(
+            f"-- Total: {sum(gq_people_by_county.values())} group quarters residents, {len(self.gqs)} group quarters"
+        )
+
+    def _log_school_summary(self):
+        students_by_county = defaultdict(int)
+        schools_by_county = defaultdict(set)
+        assigned_schools = set()
+        for school_id, student_keys in self.sch_students.items():
+            if student_keys:
+                assigned_schools.add(school_id)
+            for person_key in student_keys:
+                county = self._county_from_cbg_idx(person_key[2])
+                if county is None:
+                    continue
+                students_by_county[county] += 1
+                schools_by_county[county].add(school_id)
+        for county in sorted(set(students_by_county) | set(schools_by_county)):
+            self._log(
+                f"-- County {county}: {students_by_county[county]} students, {len(schools_by_county[county])} schools"
+            )
+        self._log(
+            f"-- Total: {sum(students_by_county.values())} students, {len(assigned_schools)} schools"
+        )
+        self._log(f"-- {len(self.sch_students) - len(assigned_schools)} schools assigned 0 students")
+
+    def _log_workplace_summary(self):
+        company_count = len(self.company_workers)
+        company_workers_n = sum(len(v) for v in self.company_workers.values())
+        school_count = len(self.sch_workers)
+        school_workers_n = sum(len(v) for v in self.sch_workers.values())
+        gq_count = len(self.gq_workers)
+        gq_workers_n = sum(len(v) for v in self.gq_workers.values())
+        outside_workers_n = sum(len(v) for v in self.outside_workers.values())
+        total_workers_n = company_workers_n + school_workers_n + gq_workers_n + outside_workers_n
+        total_workplaces_n = company_count + school_count + gq_count
+        self._log(f"-- {company_workers_n} company_workers, {company_count} companies")
+        self._log(f"-- {school_workers_n} sch_workers, {school_count} schools")
+        self._log(f"-- {gq_workers_n} gq_workers, {gq_count} GQs")
+        self._log("-- "
+                  f"{outside_workers_n} outside_workers (agents who live in geo area but work outside geo area)")
+        self._log(f"-- {total_workers_n} total workers, {total_workplaces_n} total workplaces")
+        self._log("-- "
+                  f"{len(self.dummies)} dummy agents (agents who live and work outside geo area)")
+
+    def _log_network_summary(self):
+        work_assoc = self.config.get("income_associativity_coefficient", 0.9)
+        work_k = self.config.get("workplace_K", 8)
+        sch_assoc = self.config.get("school_associativity_coefficient", 0.9)
+        sch_k = self.config.get("school_K", 12)
+        gq_k = self.config.get("gq_K", 12)
+        rewiring = self.config.get("netw_B", 0.25)
+        self._log(f"-- Workplace network (SBM, assortativity={work_assoc}, mean degree={work_k})")
+        self._log(f"-- School network (SBM, assortativity={sch_assoc}, mean degree={sch_k})")
+        self._log(f"-- GQ network (Small-world, mean degree={gq_k}, rewiring probability={rewiring})")
+        self._log("-- Household network (Each household is a complete graph)")
 
     def SynthPop(self):
         """Generate synthetic population (households, schools, workplaces, networks)."""
         if self.co_results is None:
             raise RuntimeError("CO() must be run before SynthPop()")
 
-        self._log("=" * 60)
-        self._log("Creating people, households, and group quarters")
-        self._log("=" * 60)
+        self._log("\n*** Running GeneratePop.SynthPop() ***")
         self.cbgs, self.people, self.households, self.gqs, self.gq_summary = \
             households.generate_people(
                 self.co_results, self.data_dir,
                 random_seed=self._stage_random_seeds["households"])
+        self._cbg_by_idx = {idx: cbg for cbg, idx in self.cbgs.items()}
+        self._log("\nGenerating people")
+        self._log_people_households_summary()
+        self._log("\nGenerating group quarters")
+        self._log_group_quarters_summary()
 
-        self._log("=" * 60)
-        self._log("Creating schools")
-        self._log("=" * 60)
         self.sch_students = schools.generate_schools(
             self.people, self.cbgs, self.data_dir,
             random_seed=self._stage_random_seeds["schools"])
+        self._log("\nGenerating schools")
+        self._log_school_summary()
 
-        self._log("=" * 60)
-        self._log("Creating workplaces")
-        self._log("=" * 60)
+        self._log("\nGenerating workplaces")
+        self._log("-- Generating OD matrices, exporting interim files")
+        self._log("-- processed/od_rows_origins.csv")
+        self._log("-- processed/od_columns_dests.csv")
+        wp_codes = json.load(open(os.path.join(self.data_dir, "processed", "codes.json"), "r"))
+        for ind_code in wp_codes.get("ind_codes", []):
+            self._log(f"-- processed/od_{ind_code}.csv.gz")
         (self.company_workers, self.sch_workers, self.gq_workers,
          self.outside_workers, self.dummies) = \
             workplaces.generate_jobs_and_workers(
                 self.people, self.cbgs, self.gqs,
                 self.co_results, self.gq_summary, self.data_dir,
                 random_seed=self._stage_random_seeds["workplaces"])
+        self._log_workplace_summary()
 
-        self._log("=" * 60)
-        self._log("Creating networks")
-        self._log("=" * 60)
+        self._log("\nGenerating networks")
+        self._log_network_summary()
         (self.adj_hh, self.adj_non_hh, self.adj_wp, self.adj_sch, self.adj_gq,
          self.adj_mat_keys, self.adj_dummy_keys, self.adj_out_workers) = \
             networks.generate_networks(
@@ -136,29 +233,30 @@ class GeneratePop:
                 self.outside_workers, self.dummies, self.config,
                 random_seed=self._stage_random_seeds["networks"])
 
-        self._log("done with SynthPop")
-
     def Export(self):
         """Export population and networks to CSV/MTX files."""
         if self.people is None:
             raise RuntimeError("SynthPop() must be run before Export()")
 
-        self._log("=" * 60)
-        self._log("Exporting population data")
-        self._log("=" * 60)
+        self._log("\n*** Running GeneratePop.Export() ***")
+        self._log("")
         export.export_synthpop(
             self.data_dir, self.cbgs, self.households, self.people,
             self.sch_students, self.sch_workers, self.gqs,
-            self.gq_workers, self.company_workers, self.outside_workers)
-
-        self._log("Exporting network data")
+            self.gq_workers, self.company_workers, self.outside_workers,
+            verbose=self.verbose)
         export.export_networks(
             self.data_dir, self.adj_hh, self.adj_non_hh, self.adj_wp,
             self.adj_sch, self.adj_gq, self.adj_mat_keys,
-            self.adj_dummy_keys, self.adj_out_workers)
+            self.adj_dummy_keys, self.adj_out_workers,
+            verbose=self.verbose)
 
     def run_all(self):
         """Run the complete pipeline: CO -> SynthPop -> Export."""
+        print("")
+        self._log("============================================================")
+        self._log("Running GeneratePop()")
+        self._log("============================================================")
         self.CO()
         self.SynthPop()
         self.Export()

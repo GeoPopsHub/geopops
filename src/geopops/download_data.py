@@ -353,10 +353,14 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
     # Build name-label mapping dictionary (kept in-memory; no file output)
     name_label_mapping = dict(zip(metadata_required["name"], metadata_required["label"]))
     
+    printed_acs_source = False
+    printed_dec_source = False
+    acs_source_url = f"https://api.census.gov/data/{year_ACS}/acs/acs5"
+    if year_DEC == 2020:
+        dec_source_url = f"https://api.census.gov/data/{year_DEC}/dec/dhc"
+    else:
+        dec_source_url = f"https://api.census.gov/data/{year_DEC}/dec/sf1"
     for state_i in state_fips:
-        if verbose:
-            print(f"Downloading Census data for {state_i} into census folder - DownloadData.pull_census_data()")
-        
         # Process ACS table codes
         # Note: no 2023 data for B09019/B09020/B09021
         # so we need to use 2022 data for these tables if year_ACS is 2023
@@ -423,7 +427,11 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
             file_name = f"{row['table_name']}.csv"
             file_path = os.path.join(destination_folder, file_name)
             data_with_labels.to_csv(file_path, index=False)
-            # print(f"Downloaded: census/{state_abbr.upper()}/{file_name}")
+            if verbose:
+                if not printed_acs_source:
+                    print(f"-- Downloading from {acs_source_url}")
+                    printed_acs_source = True
+                print(f"-- census/{state_abbr.upper()}/{file_name}")
         
         # Process DEC table codes        
         table_codes = pd.DataFrame({
@@ -484,7 +492,11 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
             file_name = f"{row['table_name']}.csv"
             file_path = os.path.join(destination_folder, file_name)
             data_with_labels.to_csv(file_path, index=False)
-            # print(f"Downloaded: census/{state_abbr.upper()}/{file_name}")
+            if verbose:
+                if not printed_dec_source:
+                    print(f"-- Downloading from {dec_source_url}")
+                    printed_dec_source = True
+                print(f"-- census/{state_abbr.upper()}/{file_name}")
 
 def pull_pums_data(states, year, verbose=1):
     """Function for pulling PUMS microdata for given states
@@ -515,10 +527,11 @@ def pull_pums_data(states, year, verbose=1):
         file_urls.append((state, f"https://www2.census.gov/programs-surveys/acs/data/pums/{year}/5-Year/csv_p{state}.zip"))
         # if verbose:
         #     print('file_urls', file_urls)
+    printed_source_header = False
+    pums_source_url = f"https://www2.census.gov/programs-surveys/acs/data/pums/{year}/5-Year/"
+    if verbose:
+        print("\n*** Running DownloadData.pull_pums_data() ***")
     for state_i in states:
-        
-        if verbose:
-            print(f"Downloading PUMS data for {state_i} into pums folder - DownloadData.pull_pums_data()")
         
         urls_list = [url for state, url in file_urls if state == state_i]
         
@@ -571,7 +584,11 @@ def pull_pums_data(states, year, verbose=1):
                     # ST variable now called STATE
                     df_h.rename(columns={'STATE': 'ST'}, inplace=True)
                 df_h.to_csv(f"{destination_folder}/psam_h{state_fips}.csv", index=False)
-                # print(f"Downloaded: pums/psam_h{state_fips}.csv")
+                if verbose:
+                    if not printed_source_header:
+                        print(f"-- Downloading from {pums_source_url}")
+                        printed_source_header = True
+                    print(f"-- pums/psam_h{state_fips}.csv")
             else: # psam_p{state_fips}.csv
                 df_p = pd.read_csv(f"{destination_folder}/psam_p{state_fips}.csv", low_memory=False)
                 if year >= 2022:
@@ -587,7 +604,11 @@ def pull_pums_data(states, year, verbose=1):
                     df_p.rename(columns={'STATE': 'ST'}, inplace=True)
                     df_p.rename(columns={'WKWN': 'WKW'}, inplace=True)
                 df_p.to_csv(f"{destination_folder}/psam_p{state_fips}.csv", index=False)
-                # print(f"Downloaded: pums/psam_p{state_fips}.csv")
+                if verbose:
+                    if not printed_source_header:
+                        print(f"-- Downloading from {pums_source_url}")
+                        printed_source_header = True
+                    print(f"-- pums/psam_p{state_fips}.csv")
 
 def download_shapefiles(state_fips, year, verbose=1):
     """Function for downloading shapefiles from census web server
@@ -607,10 +628,11 @@ def download_shapefiles(state_fips, year, verbose=1):
     for state in state_fips:
         file_urls.append((state, f"https://www2.census.gov/geo/tiger/TIGER{year}/BG/tl_{year}_{state}_bg.zip"))
     
+    printed_source_header = False
     for state_i in state_fips:
         
         if verbose:
-            print(f"Downloading Shapefiles for {state_i} into geo folder - DownloadData.download_shapefiles()")
+            print("\n*** Running DownloadData.download_shapefiles() ***")
         
         urls_list = [url for state, url in file_urls if state == state_i]
         
@@ -633,7 +655,11 @@ def download_shapefiles(state_fips, year, verbose=1):
             with zipfile.ZipFile(destination_file, 'r') as zip_ref:
                 zip_ref.extractall(destination_folder)
             
-            # print(f"Downloaded: geo/{file_name}")
+            if verbose:
+                if not printed_source_header:
+                    print(f"-- Downloading from https://www2.census.gov/geo/tiger/TIGER{year}/BG/")
+                    printed_source_header = True
+                print(f"-- geo/{file_name}")
 
 def pull_LODES(states_main, states_aux, year, verbose=1):
     """Function for pulling LEHD LODES data (commuting patterns) for given states
@@ -649,8 +675,9 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
         
     Notes: No LODES data for 2024 or 2025, so use 2023 data if year > 2023.
     """
+    printed_source_header = False
     if verbose:
-        print("Downloading LODES data into work folder - DownloadData.pull_LODES()")
+        print("\n*** Running DownloadData.pull_LODES() ***")
     # Determine version based on year
     version = "LODES8" if year >= 2020 else "LODES7"
     
@@ -687,7 +714,11 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                     parts[1] = parts[1][:12]  # h_geocode
                     # Add year and state
                     f_out.write(f"{year},{state_i.upper()}," + ",".join(parts) + "\n")
-        # print(f"Downloaded: work/{state_i}_od_main_JT01_{year}.csv.gz")
+        if verbose:
+            if not printed_source_header:
+                print("-- Downloading from https://lehd.ces.census.gov/data/lodes/")
+                printed_source_header = True
+            print(f"-- work/{state_i}_od_main_JT01_{year}.csv.gz")
         
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
@@ -712,7 +743,11 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                     parts[1] = parts[1][:12]  # h_geocode
                     # Add year and state
                     f_out.write(f"{year},{state_i.upper()}," + ",".join(parts) + "\n")
-        # print(f"Downloaded: work/{state_i}_od_aux_JT01_{year}.csv.gz")
+        if verbose:
+            if not printed_source_header:
+                print("-- Downloading from https://lehd.ces.census.gov/data/lodes/")
+                printed_source_header = True
+            print(f"-- work/{state_i}_od_aux_JT01_{year}.csv.gz")
         
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
@@ -736,7 +771,11 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                     parts[0] = parts[0][:12]  # w_geocode
                     # Add year and state
                     f_out.write(f"{year},{state_i.upper()}," + ",".join(parts) + "\n")
-        # print(f"Downloaded: work/{state_i}_wac_S000_JT01_{year}.csv.gz")
+        if verbose:
+            if not printed_source_header:
+                print("-- Downloading from https://lehd.ces.census.gov/data/lodes/")
+                printed_source_header = True
+            print(f"-- work/{state_i}_wac_S000_JT01_{year}.csv.gz")
         
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
@@ -766,7 +805,11 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                     parts[1] = parts[1][:12]  # h_geocode
                     # Add year and state
                     f_out.write(f"{year},{state_i.upper()}," + ",".join(parts) + "\n")
-        # print(f"Downloaded: work/{state_i}_od_aux_JT01_{year}.csv.gz")
+        if verbose:
+            if not printed_source_header:
+                print("-- Downloading from https://lehd.ces.census.gov/data/lodes/")
+                printed_source_header = True
+            print(f"-- work/{state_i.lower()}_od_aux_JT01_{year}.csv.gz")
         
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
@@ -781,13 +824,16 @@ def download_cbp_data(verbose=1):
         Outputs data files in the work folder
     """
     if verbose:
-        print("Downloading CBP data into work folder - DownloadData.download_cbp_data()")
+        print("\n*** Running DownloadData.download_cbp_data() ***")
     cbp_dir = os.path.join(OUTPUT_DIR, "work")
     os.makedirs(cbp_dir, exist_ok=True)
     
     url = "https://www2.census.gov/programs-surveys/cbp/datasets/2016/cbp16co.zip"
     outfile = os.path.join(cbp_dir, "cbp16co.zip")
     try_download(url, outfile)
+    if verbose:
+        print("-- Downloading from https://www2.census.gov/programs-surveys/cbp/datasets/2016/")
+        print("-- work/cbp16co.zip")
 
 def download_ct_puma_crosswalk(main_year, verbose=1):
     """Function for downloading Census Tract to PUMA crosswalk file
@@ -800,7 +846,7 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
         Outputs data files in the geo folder
     """
     if verbose:
-        print("Downloading Census Tract to PUMA crosswalk file into geo folder - DownloadData.download_ct_puma_crosswalk()")
+        print("\n*** Running DownloadData.download_ct_puma_crosswalk() ***")
     geo_dir = os.path.join(OUTPUT_DIR, "geo")
     os.makedirs(geo_dir, exist_ok=True)
     
@@ -814,6 +860,9 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
     
     # Use text download for these web pages since they display data in browser
     try_download_text(url, outfile)
+    if verbose:
+        print("-- Downloading from https://www2.census.gov/geo/docs/maps-data/data/rel/")
+        print(f"-- geo/{os.path.basename(outfile)}")
         
     # urls2018 = ["https://mcdc.missouri.edu/temp/geocorr2018_2523203354.csv", # geocorr2018_puma_to_county.csv
     #             "https://mcdc.missouri.edu/temp/geocorr2018_2523207598.csv", # geocorr2018_puma_to_cbsa.csv
@@ -862,7 +911,7 @@ def geocorr_files(verbose=1):
         Outputs data files in the geo folder
     """
     if verbose:
-        print("Copying geocorr files into geo folder - DownloadData.geocorr_files()")
+        print("\n*** Running DownloadData.geocorr_files() ***")
 
     # Load main_year from config to decide which geocorr files to copy
     config_path = os.path.join(BASE_DIR, "config.json")
@@ -908,6 +957,9 @@ def geocorr_files(verbose=1):
 
     if not copied_any and verbose:
         print(f"No files matching '{prefix}*' to copy from {source_dir}")
+    elif copied_any and verbose:
+        print("-- Copying package files from src/geopops/geocorr")
+        print(f"-- geo/{prefix}*")
 
 def download_school_data(main_year, verbose=1):
     """Function for downloading school data
@@ -930,7 +982,7 @@ def download_school_data(main_year, verbose=1):
     os.makedirs(school_dir, exist_ok=True)
     
     if verbose:
-        print(f"Downloading school data into school folder - DownloadData.download_school_data()")
+        print("\n*** Running DownloadData.download_school_data() ***")
     
     # Download school location data
     # https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_2021.zip
@@ -947,6 +999,9 @@ def download_school_data(main_year, verbose=1):
     # Download the file directly
     with open(zip_path, 'wb') as f:
         f.write(response.content)
+    if verbose:
+        print("-- Downloading from https://nces.ed.gov/programs/edge/data/")
+        print(f"-- school/{zip_filename}")
 
     # Extract the zip file
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
@@ -1194,7 +1249,12 @@ class DownloadData:
     def run_all(self):
         """Run the full download workflow using the loaded configuration."""
         config = self.config
-
+        if self.verbose:
+            print("")
+            print("============================================================")
+            print("Running DownloadData()")
+            print("============================================================")
+            
         # Basic validation for keys required by multiple steps
         if "census_api_key" not in config:
             raise KeyError("census_api_key not found in config. Please add your Census API key to the configuration.")
@@ -1213,7 +1273,7 @@ class DownloadData:
         self.download_cbp_data()
         self.download_school_data()
         if self.verbose:
-            print("All DownloadData() steps complete")
+            print("\nAll DownloadData() steps complete")
 
     def _main_state_fips_and_abbr(self):
         """Derive main state FIPS codes and abbreviations from config['geos']."""
@@ -1232,6 +1292,8 @@ class DownloadData:
         """Run the census download step using this instance's configuration."""
         config = self.config
         v = self.verbose
+        if v:
+            print("*** Running DownloadData.pull_census_data() ***")
 
         if "census_api_key" not in config:
             raise KeyError("census_api_key not found in config.")

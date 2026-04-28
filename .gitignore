@@ -14,7 +14,9 @@ wheels/
 
 .env
 
+# Ignore runtime/local config files
 config.json
+src/geopops/config.json
 src/geopops/config.local.json
 1_run_geopops_pyjulia.ipynb
 

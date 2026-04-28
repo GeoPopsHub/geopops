@@ -161,7 +161,6 @@ def generate_people(co_results, data_dir, random_seed=None):
     counties = read_counties(data_dir)
     hh_idx = read_hh_serials(data_dir)
 
-    print("reading person samples")
     p_samps = read_psamp_df(data_dir, ind_codes, additional_traits)
     p_idx = people_by_serial(p_samps)
 
@@ -181,11 +180,9 @@ def generate_people(co_results, data_dir, random_seed=None):
     households = {}
     people = {}
 
-    print("generating people")
     for c in counties:
         if c not in co_results:
             continue
-        print(f"  county {c}")
         cbg_hhs = co_results[c]
 
         for cbg_code, hh_vec in cbg_hhs.items():
@@ -218,10 +215,7 @@ def generate_people(co_results, data_dir, random_seed=None):
                     people=[(i + 1, hh_i, cbg_i) for i in range(len(p_vec))]
                 )
 
-    print("generating group quarters")
     cbgs, gqs, gq_people, gq_summary = generate_group_quarters(
         config, cbgs, cbg_indexer, ind_codes, data_dir, rng)
     people.update(gq_people)
-
-    print(f"  {len(people)} people, {len(households)} households, {len(gqs)} group quarters")
     return cbgs, people, households, gqs, gq_summary

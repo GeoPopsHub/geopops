@@ -98,5 +98,4 @@ def generate_schools(people, cbgs, data_dir, random_seed=None):
             sch_students[chosen] = []
         sch_students[chosen].append(pk)
 
-    print(f"  {sum(len(v) for v in sch_students.values())} students assigned to schools")
     return sch_students

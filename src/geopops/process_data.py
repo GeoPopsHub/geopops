@@ -484,7 +484,6 @@ def read_hsamp(ptotals, ADJINC, inc_cats, inc_cols):
 
 
 def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, ind_codes, occ_codes, more_summary_cols):
-    print("Generating PUMS samples - ProcessData.generate_samples()")
     # print(" - Reading PUMS data...")
     psamp, ptotals = read_psamp(LODES_cutoff, ind_codes, occ_codes)
     hsamp = read_hsamp(ptotals, ADJINC, inc_cats, inc_cols)
@@ -668,9 +667,6 @@ def read_geo_xwalk(cbg_index):
 ##
 ## group quarters by age groups, based on ACS
 def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_codes):
-
-    print("Generating group quarters data - ProcessData.generate_gq()")
-
     # everyone, by age group
     B01001 = read_acs('B01001',geos)
     ## everyone, incl group quarters
@@ -945,7 +941,6 @@ def read_occ_df(geos, occ_codes):
 #     # 15.	'With only nonrelatives present']
 
 def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_cols, ind_codes, occ_codes):
-    print("Generating Census targets - ProcessData.generate_targets()")
 
     ##
     ## a couple of cbgs in the ACS aren't in the tract-to-puma xwalk
@@ -1413,7 +1408,6 @@ def read_industry_by_dest(geos, ind_codes, ind_keys):
 ## write origin-destination, origin-industry, and industry-destination commute data
 ## to use in generating commutes by industry
 def calc_commute_marginals(geos,ind_codes,ind_keys,commute_states):
-    print("Generating commute marginals - ProcessData.calc_commute_marginals()")
     # print(" - Origin-destination commute data...")
     od_matrix, n_commuting_in, n_commuting_out = read_origin_destination(geos, commute_states)
     # print(" - Origin-industry commute data...")
@@ -1483,7 +1477,6 @@ def calc_commute_marginals(geos,ind_codes,ind_keys,commute_states):
 #N1000_4         N       Number of Establishments: Employment Size Class:
 #                                5,000 or More Employees
 def generate_work_sizes():
-    print("Generating employer sizes - ProcessData.generate_work_sizes()")
     work_counties = pd.read_csv(os.path.join(PROCESSED_DIR,'work_sizes.csv'),dtype=str)["county"].values
     cbp = read_cbp(work_counties)
     ##
@@ -1527,7 +1520,6 @@ def generate_work_sizes():
 
 ## TODO: add private schools https://nces.ed.gov/surveys/pss/index.asp
 def generate_schools(geos, main_year):
-    print("Generating school data - ProcessData.generate_schools()")
     schools = read_sch_data(geos, main_year)
     schools.to_csv(os.path.join(PROCESSED_DIR,'schools.csv'))
 
@@ -1580,14 +1572,16 @@ class ProcessData:
     Mirrors the pattern used by `Downloader` so it can be imported and run from other code.
     """
 
-    def __init__(self, config_dict=None, base_dir=None, auto_run=True):
+    def __init__(self, config_dict=None, base_dir=None, verbose=1, auto_run=True):
         """Create a census runner.
 
         Args:
             config_dict: Optional dict with configuration. If provided, takes precedence over loading from config.json.
             base_dir: Optional base dir to use for relative paths. Defaults to this file's directory.
+            verbose: If truthy, print progress logs. Defaults to 1.
         """
         self.base_dir = base_dir if base_dir is not None else BASE_DIR
+        self.verbose = verbose
 
         if config_dict is not None:
             self.config = config_dict
@@ -1609,6 +1603,10 @@ class ProcessData:
 
         if auto_run:
             self.run_all()
+
+    def _log(self, msg):
+        if self.verbose:
+            print(msg)
 
     def _init_parameters(self):
         """Compute and cache configuration-derived parameters used across steps."""
@@ -1838,6 +1836,8 @@ class ProcessData:
 
     def generate_samples(self):
         """Run the sample generation step and cache the summary."""
+        self._log("*** Running ProcessData.generate_samples() ***")
+        self._log("-- Generating PUMS samples")
         self.p_summary = generate_samples(
             self.sample_columns,
             self.ADJINC,
@@ -1848,10 +1848,16 @@ class ProcessData:
             self.occ_codes,
             self.more_summary_cols,
         )
+        self._log("-- processed/census_samples.csv")
+        self._log("-- processed/samp_geo.csv")
+        self._log("-- processed/hh_samples.csv")
+        self._log("-- processed/p_samples.csv")
         return self.p_summary
 
     def generate_gq(self):
         """Run the group quarters generation step and cache intermediate data."""
+        self._log("\n*** Running ProcessData.generate_gq() ***")
+        self._log("-- Generating group quarters data")
         if self.geos is None:
             raise ValueError("geos is not defined in config; cannot generate group quarters data.")
         if self.p_summary is None:
@@ -1868,10 +1874,13 @@ class ProcessData:
             self.ind_codes,
             self.occ_codes,
         )
+        self._log("-- processed/group_quarters.csv")
         return self.gq_stats
 
     def generate_targets(self):
         """Run the target generation step."""
+        self._log("\n*** Running ProcessData.generate_targets() ***")
+        self._log("-- Generating census targets")
         if self.geos is None:
             raise ValueError("geos is not defined in config; cannot generate targets.")
         if self.geo_xwalk is None or self.gq_stats is None:
@@ -1887,9 +1896,14 @@ class ProcessData:
             self.ind_codes,
             self.occ_codes,
         )
+        self._log("-- processed/hh_counts.csv")
+        self._log("-- processed/acs_targets.csv")
+        self._log("-- processed/cbg_geo.csv")
 
     def calc_commute_marginals(self):
         """Run the commute marginals calculation step."""
+        self._log("\n*** Running ProcessData.calc_commute_marginals() ***")
+        self._log("-- Generating commute marginals")
         if self.geos is None:
             raise ValueError("geos is not defined in config; cannot calculate commute marginals.")
 
@@ -1899,27 +1913,43 @@ class ProcessData:
             self.ind_keys,
             self.commute_states,
         )
+        self._log("-- processed/work_cats_live_outside.csv")
+        self._log("-- processed/work_od_prop.csv")
+        self._log("-- processed/work_io_sums.csv")
+        self._log("-- processed/work_id_est_sums.csv")
 
     def generate_work_sizes(self):
         """Run the workplace size generation step."""
+        self._log("\n*** Running ProcessData.generate_work_sizes() ***")
+        self._log("-- Generating employer sizes")
         generate_work_sizes()
+        self._log("-- processed/work_sizes.csv")
 
     def generate_schools(self):
         """Run the school processing step."""
+        self._log("\n*** Running ProcessData.generate_schools() ***")
+        self._log("-- Generating school data")
         if self.geos is None or self.main_year is None:
             raise ValueError("geos or main_year not defined in config; cannot generate schools.")
         generate_schools(self.geos, self.main_year)
+        self._log("-- processed/schools.csv")
+        self._log("-- processed/cbg_sch_distmat.csv")
 
     def run_all(self):
         """Run the full census processing pipeline."""
+        self._log("")
+        self._log("============================================================")
+        self._log("Running ProcessData()")
+        self._log("============================================================")
         self.generate_samples()
         self.generate_gq()
         self.generate_targets()
         self.calc_commute_marginals()
         self.generate_work_sizes()
         self.generate_schools()
-        print("All ProcessData() steps complete")
-
+        self._log("")
+        self._log("All ProcessData() steps complete")
+    
     def quality_check(self, *, auto_print=True):
         """Run processed geography alignment checks and optionally print a summary.
 
@@ -1940,6 +1970,7 @@ class ProcessData:
         This intentionally reads from `${config['path']}/processed/*` so it works
         after `auto_run=True` as well.
         """
+        self._log("\n*** Running ProcessData.quality_check() ***")
         qc = QualityCheck(config_dict=self.config, base_dir=self.base_dir, auto_run=False)
         qc._results = qc.run_all()  # ensure we return the same object we print
         if auto_print:
@@ -2042,6 +2073,7 @@ class QualityCheck:
         if self._results is None:
             self.run_all()
         res = self._results
+        print("\n*** Running QualityCheck.print_results() ***")
         print("QualityCheck results")
         print(f"data_dir: {res['data_dir']}")
         print("")

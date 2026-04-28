@@ -88,11 +88,14 @@ class WriteConfig:
                  use_pums=None,
                  path=None,
                  julia_env_path=None,
+                 pars=None,
                  config_dict=None,
                  base_dir=None):
+        pars = pars or {}
         self.base_dir = base_dir if base_dir is not None else BASE_DIR
         # Load base template from the package directory unless a dict is provided
         self.template_config_path = os.path.join(self.base_dir, "config.json")
+        path = pars.get("path") if path is None else path
         if path is not None:
             # If path is a directory, append 'config.json' to it
             if os.path.isdir(path):
@@ -101,20 +104,26 @@ class WriteConfig:
                 self.path = path
         else:
             self.path = self.template_config_path
+        if config_dict is None:
+            config_dict = pars.get("config_dict")
         self.config = config_dict if config_dict is not None else load_config(self.base_dir)
         self.overrides = {
-            "census_api_key": census_api_key,
-            "main_year": main_year,
-            "geos": geos,
-            "commute_states": commute_states,
-            "use_pums": use_pums,
+            "census_api_key": pars.get("census_api_key") if census_api_key is None else census_api_key,
+            "main_year": pars.get("main_year") if main_year is None else main_year,
+            "geos": pars.get("geos") if geos is None else geos,
+            "commute_states": pars.get("commute_states") if commute_states is None else commute_states,
+            "use_pums": pars.get("use_pums") if use_pums is None else use_pums,
             "path": path,
-            "julia_env_path": julia_env_path,
+            "julia_env_path": pars.get("julia_env_path") if julia_env_path is None else julia_env_path,
         }
         
         self.run_all()
 
     def run_all(self):
+        print("")
+        print("============================================================")
+        print("Running WriteConfig()")
+        print("============================================================")
         update_config_values(
             self.config,
             census_api_key=self.overrides["census_api_key"],
@@ -129,7 +138,7 @@ class WriteConfig:
         save_config(self.config, self.path)
         # Also save to package directory
         save_config(self.config, self.template_config_path)
-        print("Updated config.json with new parameters")
+        print("-- Updated config.json with parameter dictionary")
 
     def get_pars(self):
         with open(self.path, "r") as f:
