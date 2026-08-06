@@ -151,9 +151,16 @@ def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng)
     return cbgs, gqs, gq_people, gq_summary
 
 
-def generate_people(co_results, data_dir, random_seed=None):
+def _resolve_config(config, data_dir):
+    """Use in-memory config when provided; otherwise fall back to data_dir/config.json."""
+    if config is not None:
+        return config
+    return tryJSON(os.path.join(data_dir, 'config.json'))
+
+
+def generate_people(co_results, data_dir, config=None, random_seed=None):
     rng = np.random.default_rng(random_seed)
-    config = tryJSON(os.path.join(data_dir, 'config.json'))
+    config = _resolve_config(config, data_dir)
     additional_traits = config.get('additional_traits', [])
     wp_codes = tryJSON(os.path.join(data_dir, 'processed', 'codes.json'))
     ind_codes = wp_codes.get('ind_codes', [])

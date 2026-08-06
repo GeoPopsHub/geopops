@@ -238,6 +238,9 @@ def read_psamp(LODES_cutoff, ind_codes, occ_codes):
     # print('test',psamp['SCHG'].unique())
     ####
     
+    # Normalize PUMA to fixed-width code so keys align with crosswalk-derived st_puma (STATE + 5-digit PUMA).
+    psamp['ST'] = psamp['ST'].astype(str).str.strip()
+    psamp['PUMA'] = psamp['PUMA'].astype(str).str.strip().str.zfill(5)
     psamp['st_puma'] = psamp['ST'] + psamp['PUMA']
     psamp['sch_grade'] = psamp['SCHG'].map(dict(zip([str(x) for x in range(1,17)], ['p','k',*[str(x) for x in range(1,13)],'c','g'])))
     # print('sch_grade',psamp['sch_grade'].unique())
@@ -503,19 +506,32 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
     ## put into folder "geo"
     # print(" - Reading geo crosswalks...")
 
-    samp_geo = hsamp[['PUMA','ST']].reset_index().copy(deep=True)
-    samp_geo['st_puma'] = samp_geo['ST'] + samp_geo['PUMA'].str.zfill(5)
+    samp_geo = hsamp[['PUMA', 'ST']].reset_index().copy(deep=True)
+    # Normalize household PUMA keys to avoid float artifacts (e.g., "903.0") and preserve leading zeros.
+    samp_geo['ST'] = samp_geo['ST'].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    samp_geo['PUMA'] = samp_geo['PUMA'].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).str.zfill(5)
+    samp_geo['st_puma'] = samp_geo['ST'] + samp_geo['PUMA']
     ## simpler: place each puma in its primary cbsa
-    file = glob(os.path.join(OUTPUT_DIR, "geo","*puma_to_cbsa*.*"))[0]
+    matches = glob(os.path.join(OUTPUT_DIR, "geo", "*puma_to_cbsa*.*"))
+    if not matches:
+        raise FileNotFoundError(
+            f"Could not find puma_to_cbsa crosswalk in {os.path.join(OUTPUT_DIR, 'geo')}. "
+            "Expected a file matching '*puma_to_cbsa*.*'."
+        )
+    file = matches[0]
     
     #### puma_to_cbsa ####
     # puma_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","cbsa","afact"])
     candidate_cols = {"state", "puma12", "puma22", "cbsa", "cbsa20", "afact"}
-    puma_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1') 
-    col_puma = puma_to_cbsa.columns[1] # rename "puma12" and "puma22" to "puma"
-    puma_to_cbsa.rename(columns={col_puma: "puma12"}, inplace=True)
-    col_cbsa = puma_to_cbsa.columns[2] # rename "cbsa20" to "cbsa"
-    puma_to_cbsa.rename(columns={col_cbsa: "cbsa"}, inplace=True)
+    puma_to_cbsa = pd.read_csv(file, dtype=str, skiprows=[1], usecols=lambda c: c in candidate_cols, encoding='latin-1')
+    col_puma = "puma12" if "puma12" in puma_to_cbsa.columns else "puma22" if "puma22" in puma_to_cbsa.columns else None
+    col_cbsa = "cbsa" if "cbsa" in puma_to_cbsa.columns else "cbsa20" if "cbsa20" in puma_to_cbsa.columns else None
+    required_found = {"state", "afact"} | ({col_puma} if col_puma else set()) | ({col_cbsa} if col_cbsa else set())
+    missing = [c for c in ["state", "afact", col_puma, col_cbsa] if c is None or c not in puma_to_cbsa.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in puma_to_cbsa crosswalk {file}: {missing}. Found: {list(puma_to_cbsa.columns)}")
+    puma_to_cbsa = puma_to_cbsa[list(required_found)].copy()
+    puma_to_cbsa.rename(columns={col_puma: "puma12", col_cbsa: "cbsa"}, inplace=True)
     # now use only "puma" and "cbsa" 
     puma_to_cbsa['st_puma'] = puma_to_cbsa['state'] + puma_to_cbsa['puma12'].str.zfill(5)
     puma_to_cbsa.loc[puma_to_cbsa['cbsa']==" ", 'cbsa'] = "none"
@@ -527,23 +543,43 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
     ## -- we're only looking up samples by county when it contains multiple pumas
     
     #### puma_to_county ####
-    file = glob(os.path.join(OUTPUT_DIR, "geo","*puma_to_county*.*"))[0]
+    matches = glob(os.path.join(OUTPUT_DIR, "geo", "*puma_to_county*.*"))
+    if not matches:
+        raise FileNotFoundError(
+            f"Could not find puma_to_county crosswalk in {os.path.join(OUTPUT_DIR, 'geo')}. "
+            "Expected a file matching '*puma_to_county*.*'."
+        )
+    file = matches[0]
     # puma_to_county = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","county","afact"])
     candidate_cols = {"state", "puma12", "puma22", "county", "afact"}
-    puma_to_county = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1')
-    col_puma = puma_to_county.columns[1] # rename "puma12" and "puma22" to "puma"
+    puma_to_county = pd.read_csv(file, dtype=str, skiprows=[1], usecols=lambda c: c in candidate_cols, encoding='latin-1')
+    col_puma = "puma12" if "puma12" in puma_to_county.columns else "puma22" if "puma22" in puma_to_county.columns else None
+    missing = [c for c in ["state", "afact", "county", col_puma] if c is None or c not in puma_to_county.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in puma_to_county crosswalk {file}: {missing}. Found: {list(puma_to_county.columns)}")
+    puma_to_county = puma_to_county[["state", col_puma, "county", "afact"]].copy()
     puma_to_county.rename(columns={col_puma: "puma12"}, inplace=True)
     puma_to_county['st_puma'] = puma_to_county['state'] + puma_to_county['puma12'].str.zfill(5)
     puma_to_county = puma_to_county.groupby('st_puma',group_keys=True).apply(lambda g: g[g['afact'] == g['afact'].max()], include_groups=False).reset_index()
     puma_to_county = puma_to_county[['st_puma','county']]
     samp_geo = samp_geo.merge(puma_to_county, how='left', on='st_puma')
-    file = glob(os.path.join(OUTPUT_DIR, "geo","*puma_urban_rural*.*"))[0]
+    matches = glob(os.path.join(OUTPUT_DIR, "geo", "*puma_urban_rural*.*"))
+    if not matches:
+        raise FileNotFoundError(
+            f"Could not find puma_urban_rural crosswalk in {os.path.join(OUTPUT_DIR, 'geo')}. "
+            "Expected a file matching '*puma_urban_rural*.*'."
+        )
+    file = matches[0]
     
     #### puma_urban_rural ####
     # puma_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","ur","afact"])
     candidate_cols = {"state", "puma12", "puma22", "ur", "afact"}
-    puma_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1')
-    col_puma = puma_ur.columns[1] # rename "puma12" and "puma22" to "puma"
+    puma_ur = pd.read_csv(file, dtype=str, skiprows=[1], usecols=lambda c: c in candidate_cols, encoding='latin-1')
+    col_puma = "puma12" if "puma12" in puma_ur.columns else "puma22" if "puma22" in puma_ur.columns else None
+    missing = [c for c in ["state", "afact", "ur", col_puma] if c is None or c not in puma_ur.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in puma_urban_rural crosswalk {file}: {missing}. Found: {list(puma_ur.columns)}")
+    puma_ur = puma_ur[["state", col_puma, "ur", "afact"]].copy()
     puma_ur.rename(columns={col_puma: "puma12"}, inplace=True)
     puma_ur['st_puma'] = puma_ur['state'] + puma_ur['puma12'].str.zfill(5)
     puma_ur = puma_ur.pivot(index='st_puma', columns='ur', values='afact').fillna(0)
@@ -609,8 +645,25 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
 ##
 ## put into folder "geo"
 def read_geo_xwalk(cbg_index):
-    
-    file = glob(os.path.join(OUTPUT_DIR, "geo","*Census_Tract_to*PUMA*.*"))[0]
+    main_year = None
+    if isinstance(config, dict) and "main_year" in config:
+        try:
+            main_year = int(config["main_year"])
+        except Exception:
+            main_year = None
+
+    # Select tract->PUMA crosswalk deterministically by year to avoid ambiguous glob ordering.
+    if main_year is not None and main_year >= 2020:
+        tract_puma_pattern = "*2020_Census_Tract_to_2020_PUMA*.*"
+    else:
+        tract_puma_pattern = "*2010_Census_Tract_to_2010_PUMA*.*"
+    matches = glob(os.path.join(OUTPUT_DIR, "geo", tract_puma_pattern))
+    if not matches:
+        raise FileNotFoundError(
+            f"Could not find tract->PUMA crosswalk in {os.path.join(OUTPUT_DIR, 'geo')} "
+            f"matching '{tract_puma_pattern}'."
+        )
+    file = matches[0]
     tpum = pd.read_csv(file,dtype=str)
     first_col = tpum.columns[0]
     tpum = tpum.rename(columns={first_col: "STATEFP"})
@@ -626,14 +679,27 @@ def read_geo_xwalk(cbg_index):
     
     
     #### cbg_to_cbsa ####
-    file = glob(os.path.join(OUTPUT_DIR, "geo","*cbg_to_cbsa*.*"))[0]
+    if main_year is not None and main_year >= 2020:
+        cbg_cbsa_pattern = "*geocorr2022*cbg_to_cbsa*.*"
+    else:
+        cbg_cbsa_pattern = "*geocorr2018*cbg_to_cbsa*.*"
+    matches = glob(os.path.join(OUTPUT_DIR, "geo", cbg_cbsa_pattern))
+    if not matches:
+        raise FileNotFoundError(
+            f"Could not find cbg_to_cbsa crosswalk in {os.path.join(OUTPUT_DIR, 'geo')} "
+            f"matching '{cbg_cbsa_pattern}'."
+        )
+    file = matches[0]
     # cbg_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["county","tract","bg","cbsa"])
     candidate_cols = {"county", "tract", "bg", "blockgroup", "cbsa", "cbsa20"} #Read only the columns that might appear
     cbg_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1') # include any of these names
-    col_bg = cbg_to_cbsa.columns[2] # should be "bg" or "blockgroup"
-    cbg_to_cbsa.rename(columns={col_bg: "bg"}, inplace=True)
-    col_cbsa = cbg_to_cbsa.columns[3] # should be "cbsa" or "cbsa20"
-    cbg_to_cbsa.rename(columns={col_cbsa: "cbsa"}, inplace=True)
+    col_bg = "bg" if "bg" in cbg_to_cbsa.columns else "blockgroup" if "blockgroup" in cbg_to_cbsa.columns else None
+    col_cbsa = "cbsa" if "cbsa" in cbg_to_cbsa.columns else "cbsa20" if "cbsa20" in cbg_to_cbsa.columns else None
+    missing = [c for c in ["county", "tract", col_bg, col_cbsa] if c is None or c not in cbg_to_cbsa.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in cbg_to_cbsa crosswalk {file}: {missing}. Found: {list(cbg_to_cbsa.columns)}")
+    cbg_to_cbsa = cbg_to_cbsa[["county", "tract", col_bg, col_cbsa]].copy()
+    cbg_to_cbsa.rename(columns={col_bg: "bg", col_cbsa: "cbsa"}, inplace=True)
     cbg_to_cbsa['Geo'] = cbg_to_cbsa['county'] + \
         cbg_to_cbsa['tract'].map(lambda x: x[0:4]) + cbg_to_cbsa['tract'].map(lambda x: x[5:]) + \
         cbg_to_cbsa['bg']
@@ -641,14 +707,27 @@ def read_geo_xwalk(cbg_index):
     # cbg_to_cbsa.to_csv(os.path.join(PROCESSED_DIR,'cbg_to_cbsa_test.csv'))
     
     #### cbg_urban_rural ####
-    file = glob(os.path.join(OUTPUT_DIR, "geo","*cbg_urban_rural*.*"))[0]
+    if main_year is not None and main_year >= 2020:
+        cbg_ur_pattern = "*geocorr2022*cbg_urban_rural*.*"
+    else:
+        cbg_ur_pattern = "*geocorr2018*cbg_urban_rural*.*"
+    matches = glob(os.path.join(OUTPUT_DIR, "geo", cbg_ur_pattern))
+    if not matches:
+        raise FileNotFoundError(
+            f"Could not find cbg_urban_rural crosswalk in {os.path.join(OUTPUT_DIR, 'geo')} "
+            f"matching '{cbg_ur_pattern}'."
+        )
+    file = matches[0]
     # cbg_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["county","tract","bg","ur","pop10","afact"])
     candidate_cols = {"county", "tract", "bg", "blockgroup", "ur", "pop10", "pop20", "afact"} #Read only the columns that might appear
     cbg_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=lambda c: c in candidate_cols, encoding='latin-1') # include any of these names
-    col_bg = cbg_ur.columns[2]
-    cbg_ur.rename(columns={col_bg: "bg"}, inplace=True)
-    col_pop = cbg_ur.columns[4]
-    cbg_ur.rename(columns={col_pop: "pop10"}, inplace=True)
+    col_bg = "bg" if "bg" in cbg_ur.columns else "blockgroup" if "blockgroup" in cbg_ur.columns else None
+    col_pop = "pop20" if "pop20" in cbg_ur.columns else "pop10" if "pop10" in cbg_ur.columns else None
+    missing = [c for c in ["county", "tract", "ur", "afact", col_bg, col_pop] if c is None or c not in cbg_ur.columns]
+    if missing:
+        raise ValueError(f"Missing required columns in cbg_urban_rural crosswalk {file}: {missing}. Found: {list(cbg_ur.columns)}")
+    cbg_ur = cbg_ur[["county", "tract", col_bg, "ur", col_pop, "afact"]].copy()
+    cbg_ur.rename(columns={col_bg: "bg", col_pop: "pop10"}, inplace=True)
     cbg_ur['Geo'] = cbg_ur['county'] + \
         cbg_ur['tract'].map(lambda x: x[0:4]) + cbg_ur['tract'].map(lambda x: x[5:]) + \
         cbg_ur['bg']
@@ -1681,7 +1760,10 @@ class ProcessData:
         # Additional traits to include in p_samples summary
         self.more_summary_cols = d.get(
             "additional_traits",
-            ['sch_public', 'sch_private', 'female', 'race_black_alone', 'white_non_hispanic', 'hispanic'],
+            ['sch_public', 'sch_private', 'female',
+             'race_white_alone', 'race_black_alone', 'race_amerindian_or_alaskan',
+             'race_asian_alone', 'race_pacific_alone', 'race_other_alone',
+             'race_two_or_more', 'hispanic'],
         )
 
         # Make a list of column names for B11012. Wording is different in 2019 and 2020.

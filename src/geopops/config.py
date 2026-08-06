@@ -32,12 +32,24 @@ def load_config(base_dir=None):
     return config
 
 
-def save_config(config, config_path=None):
+SENSITIVE_CONFIG_KEYS = ("census_api_key", "julia_env_path")
+
+
+def _template_config(config):
+    """Return a copy safe to ship/write as the package template (no secrets)."""
+    template = dict(config)
+    for key in SENSITIVE_CONFIG_KEYS:
+        template[key] = None
+    return template
+
+
+def save_config(config, config_path=None, *, sanitize=False):
     cfg_path = config_path if config_path is not None else os.path.join(BASE_DIR, "config.json")
+    payload = _template_config(config) if sanitize else config
     # Ensure target directory exists when writing to a custom location
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     with open(cfg_path, "w") as f:
-        json.dump(config, f, indent=4)
+        json.dump(payload, f, indent=4)
 
 
 def compute_decennial_year(main_year):
@@ -134,10 +146,12 @@ class WriteConfig:
             path=self.overrides["path"],
             julia_env_path=self.overrides["julia_env_path"],
         )
-        # Save to user-specified path
-        save_config(self.config, self.path)
-        # Also save to package directory
-        save_config(self.config, self.template_config_path)
+        # User output path may include secrets for local runs; package template never should.
+        if os.path.abspath(self.path) != os.path.abspath(self.template_config_path):
+            save_config(self.config, self.path)
+            save_config(self.config, self.template_config_path, sanitize=True)
+        else:
+            save_config(self.config, self.template_config_path, sanitize=True)
         print("-- Updated config.json with parameter dictionary")
 
     def get_pars(self):

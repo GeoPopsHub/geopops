@@ -14,14 +14,13 @@ wheels/
 
 .env
 
-# Ignore runtime/local config files
-config.json
-src/geopops/config.json
+# Ignore local/machine-specific config overrides (keep packaged config.json tracked)
 src/geopops/config.local.json
 1_run_geopops_pyjulia.ipynb
 
 uv.lock
 
 tutorials/
+tests/
 
 *.pptx

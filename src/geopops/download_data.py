@@ -850,7 +850,7 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
     geo_dir = os.path.join(OUTPUT_DIR, "geo")
     os.makedirs(geo_dir, exist_ok=True)
     
-    # # https://www2.census.gov/geo/docs/maps-data/data/rel2020/2020_Census_Tract_to_2020_PUMA.txt
+    # https://www2.census.gov/geo/docs/maps-data/data/rel2020/2020_Census_Tract_to_2020_PUMA.txt
     if main_year >= 2020:
         url = "https://www2.census.gov/geo/docs/maps-data/data/rel2020/2020_Census_Tract_to_2020_PUMA.txt"
         outfile = os.path.join(geo_dir, "2020_Census_Tract_to_2020_PUMA.txt")

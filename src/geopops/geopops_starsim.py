@@ -8,6 +8,55 @@ import json
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def _load_age_by_matrix_index(pop_export_dir):
+    """Map matrix row/col index (``index_zero``) to age, same merge as ``ForStarsim.People``."""
+    adj = pd.read_csv(os.path.join(pop_export_dir, "adj_mat_keys.csv"), low_memory=False)
+    people = pd.read_csv(os.path.join(pop_export_dir, "people.csv"), low_memory=False)
+    merged = adj.merge(people, on=["p_id", "hh_id", "cbg_id"], how="left")
+    merged = merged.drop_duplicates(subset=["index_zero"], keep="first")
+    return merged.set_index("index_zero")["age"]
+
+
+def _canonicalize_undirected_edges_df(net_df, age_by_idx):
+    """Reorder ``p1``, ``p2`` so ``age(p1) <= age(p2)`` when both ages exist; else smaller index is ``p1``."""
+    if net_df.empty:
+        return net_df.copy()
+    out = net_df.copy()
+    p1 = out["p1"].to_numpy(dtype=np.int64, copy=True)
+    p2 = out["p2"].to_numpy(dtype=np.int64, copy=True)
+    a1 = age_by_idx.reindex(p1).to_numpy()
+    a2 = age_by_idx.reindex(p2).to_numpy()
+    a1 = np.where(pd.isna(a1), np.nan, np.asarray(a1, dtype=float))
+    a2 = np.where(pd.isna(a2), np.nan, np.asarray(a2, dtype=float))
+    both = np.isfinite(a1) & np.isfinite(a2)
+    swap = np.zeros(len(out), dtype=bool)
+    swap[both] = (a1[both] > a2[both]) | ((a1[both] == a2[both]) & (p1[both] > p2[both]))
+    swap[~both] = p1[~both] > p2[~both]
+    out.loc[swap, ["p1", "p2"]] = np.column_stack([p2[swap], p1[swap]])
+    return out
+
+
+def _random_flip_undirected_edges_df(net_df, rng):
+    """
+    Randomly swap (p1, p2) per edge with probability 0.5.
+    This only changes endpoint labeling and therefore affects plots that treat (p1_age, p2_age) as ordered.
+    """
+    if net_df.empty:
+        return net_df.copy()
+    out = net_df.copy()
+    p1 = out["p1"].to_numpy(dtype=np.int64, copy=True)
+    p2 = out["p2"].to_numpy(dtype=np.int64, copy=True)
+    flip = rng.random(len(out)) < 0.5
+    # swap endpoints for flipped edges
+    p1_new = p1.copy()
+    p2_new = p2.copy()
+    p1_new[flip] = p2[flip]
+    p2_new[flip] = p1[flip]
+    out["p1"] = p1_new
+    out["p2"] = p2_new
+    return out
+
+
 class _ForStarsimSubgroupTracking(ss.Analyzer):
     def __init__(self, subgroup, outcome, name=None, state_id=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -166,23 +215,38 @@ class _ForStarsimGPNetwork(ss.Network):
         with open(cfg_path, "r") as f:
             config = json.load(f)
         path = config.get("path")
+        flip_seed = int(config.get("random_seed", 0))
 
         def new_layer(file):
             m = mmread(file)
-            mat_data = {'p1': m.col, 'p2': m.row}
-            mat = pd.DataFrame(data=mat_data)
-            mat['edge_weight'] = 1
+            mat = pd.DataFrame({
+                "p1": np.asarray(m.col, dtype=np.int64),
+                "p2": np.asarray(m.row, dtype=np.int64),
+            })
+            mat["edge_weight"] = np.int64(1)
             return mat
 
-        ForStarsim._net_h = new_layer(f'{path}/pop_export/adj_upper_triang_hh.mtx')
-        ForStarsim._net_s = new_layer(f'{path}/pop_export/adj_upper_triang_sch.mtx')
-        ForStarsim._net_w = new_layer(f'{path}/pop_export/adj_upper_triang_wp.mtx')
-        ForStarsim._net_g = new_layer(f'{path}/pop_export/adj_upper_triang_gq.mtx')
+        pop_export = os.path.join(path, "pop_export")
+        starsim_dir = os.path.join(pop_export, "starsim")
+        os.makedirs(starsim_dir, exist_ok=True)
 
-        ForStarsim._net_h.to_csv(f'{path}/pop_export/starsim/net_h.csv')
-        ForStarsim._net_s.to_csv(f'{path}/pop_export/starsim/net_s.csv')
-        ForStarsim._net_w.to_csv(f'{path}/pop_export/starsim/net_w.csv')
-        ForStarsim._net_g.to_csv(f'{path}/pop_export/starsim/net_g.csv')
+        ForStarsim._net_h = new_layer(os.path.join(pop_export, "adj_upper_triang_hh.mtx"))
+        ForStarsim._net_s = new_layer(os.path.join(pop_export, "adj_upper_triang_sch.mtx"))
+        ForStarsim._net_w = new_layer(os.path.join(pop_export, "adj_upper_triang_wp.mtx"))
+        ForStarsim._net_g = new_layer(os.path.join(pop_export, "adj_upper_triang_gq.mtx"))
+
+        # For plotting/visualization: treat undirected layers as having ~50/50 endpoint ordering.
+        # This avoids having plots that interpret (p1_age, p2_age) as ordered appear "triangular" or asymmetric.
+        flip_rng = np.random.default_rng(flip_seed)
+        ForStarsim._net_h = _random_flip_undirected_edges_df(ForStarsim._net_h, flip_rng)
+        ForStarsim._net_s = _random_flip_undirected_edges_df(ForStarsim._net_s, flip_rng)
+        ForStarsim._net_w = _random_flip_undirected_edges_df(ForStarsim._net_w, flip_rng)
+        ForStarsim._net_g = _random_flip_undirected_edges_df(ForStarsim._net_g, flip_rng)
+
+        ForStarsim._net_h.to_csv(os.path.join(starsim_dir, "net_h.csv"), index=False)
+        ForStarsim._net_s.to_csv(os.path.join(starsim_dir, "net_s.csv"), index=False)
+        ForStarsim._net_w.to_csv(os.path.join(starsim_dir, "net_w.csv"), index=False)
+        ForStarsim._net_g.to_csv(os.path.join(starsim_dir, "net_g.csv"), index=False)
 
         print("Network csv files created and saved successfully")
 
@@ -276,19 +340,22 @@ class ForStarsim:
         hh.drop(columns=['sample_index'], inplace=True)
         ppl_df = ppl_df.merge(hh, on=['cbg_id', 'hh_id'], how='left')
         ppl_df.loc[ppl_df['household'].isnull(), 'household'] = 0
-        ppl_df.loc[ppl_df['race_black_alone'] == 0, 'race_ethnicity'] = 0.0
-        ppl_df.loc[ppl_df['hispanic'] == 1, 'race_ethnicity'] = 1.0
-        ppl_df.loc[ppl_df['white_non_hispanic'] == 1, 'race_ethnicity'] = 2.0
+        race_trait_cols = [
+            'race_white_alone', 'race_black_alone', 'race_amerindian_or_alaskan',
+            'race_asian_alone', 'race_pacific_alone', 'race_other_alone',
+            'race_two_or_more', 'hispanic',
+        ]
         ppl_df = ppl_df[['uid', 'p_id', 'hh_id', 'cbg_id', 'sample_index', 'state', 'county', 'tract', 'cbg_geocode',
-                         'household', 'age', 'agegroup', 'female', 'race_black_alone', 'white_non_hispanic',
-                         'hispanic', 'race_ethnicity', 'working', 'commuter', 'commuter_income_category',
-                         'commuter_workplace_category', 'sch_grade', 'sch_code']]
+                         'household', 'age', 'agegroup', 'female', *race_trait_cols, 'working', 'commuter',
+                         'commuter_income_category', 'commuter_workplace_category', 'sch_grade', 'sch_code']]
         ppl_df.to_csv(f'{path}/pop_export/people_all.csv', index=False)
 
         age = ss.FloatArr('age', default=ss.BaseArr(ppl_df['age'].values))
         agegroup = ss.FloatArr('agegroup', default=ss.BaseArr(ppl_df['agegroup'].values))
         female = ss.FloatArr('female', default=ss.BaseArr(ppl_df['female'].values))
-        race_ethnicity = ss.FloatArr('race_ethnicity', default=ss.BaseArr(ppl_df['race_ethnicity'].values))
+        race_trait_states = [
+            ss.FloatArr(col, default=ss.BaseArr(ppl_df[col].values)) for col in race_trait_cols
+        ]
         state = ss.IntArr('state', default=ss.BaseArr(ppl_df['state'].values))
         county = ss.IntArr('county', default=ss.BaseArr(ppl_df['county'].values))
         tract = ss.IntArr('tract', default=ss.BaseArr(ppl_df['tract'].values))
@@ -304,7 +371,7 @@ class ForStarsim:
         sch_code = ss.IntArr('sch_code', default=ss.BaseArr(ppl_df['sch_code'].values))
 
         ppl = ss.People(n_agents=len(ppl_df), extra_states=[
-            agegroup, race_ethnicity, state, county, tract, cbg_geocode,
+            agegroup, *race_trait_states, state, county, tract, cbg_geocode,
             household, commuter, commuter_income_category, commuter_workplace_category, sch_code
         ])
 

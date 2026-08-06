@@ -194,7 +194,7 @@ class GeneratePop:
         self._log("\n*** Running GeneratePop.SynthPop() ***")
         self.cbgs, self.people, self.households, self.gqs, self.gq_summary = \
             households.generate_people(
-                self.co_results, self.data_dir,
+                self.co_results, self.data_dir, config=self.config,
                 random_seed=self._stage_random_seeds["households"])
         self._cbg_by_idx = {idx: cbg for cbg, idx in self.cbgs.items()}
         self._log("\nGenerating people")
@@ -212,7 +212,9 @@ class GeneratePop:
         self._log("-- Generating OD matrices, exporting interim files")
         self._log("-- processed/od_rows_origins.csv")
         self._log("-- processed/od_columns_dests.csv")
-        wp_codes = json.load(open(os.path.join(self.data_dir, "processed", "codes.json"), "r"))
+        codes_path = os.path.join(self.data_dir, "processed", "codes.json")
+        with open(codes_path, "r", encoding="utf-8") as f:
+            wp_codes = json.load(f)
         for ind_code in wp_codes.get("ind_codes", []):
             self._log(f"-- processed/od_{ind_code}.csv.gz")
         (self.company_workers, self.sch_workers, self.gq_workers,

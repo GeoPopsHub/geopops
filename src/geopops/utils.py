@@ -29,8 +29,13 @@ class PersonData:
     sch_public: Optional[bool] = None
     sch_private: Optional[bool] = None
     female: Optional[bool] = None
+    race_white_alone: Optional[bool] = None
     race_black_alone: Optional[bool] = None
-    white_non_hispanic: Optional[bool] = None
+    race_amerindian_or_alaskan: Optional[bool] = None
+    race_asian_alone: Optional[bool] = None
+    race_pacific_alone: Optional[bool] = None
+    race_other_alone: Optional[bool] = None
+    race_two_or_more: Optional[bool] = None
     hispanic: Optional[bool] = None
 
 
