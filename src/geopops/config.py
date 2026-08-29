@@ -1,10 +1,40 @@
+"""Configuration loading, merging, and validation for GeoPops.
+
+The packaged ``config.json`` is a read-only *template*. A run's config is an
+ordinary dict, and :func:`make_config` returns one; persisting it is the caller's
+choice and, by default, writes into the run's own output directory rather than into
+the installed package.
+
+Secrets (the Census API key) come from the environment or a ``.env`` file and are
+never written into the packaged template.
+"""
 import json
 import os
+import warnings
+
 from dotenv import load_dotenv, find_dotenv
+
+from .exceptions import ConfigError
 
 load_dotenv(find_dotenv())
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_PATH = os.path.join(BASE_DIR, "config.json")
+
+#: Config keys that must never be written into the packaged template
+SENSITIVE_CONFIG_KEYS = ("census_api_key",)
+
+#: Config keys that may be supplied as user-facing overrides
+OVERRIDE_KEYS = ("census_api_key", "main_year", "geos", "commute_states",
+                 "use_pums", "path", "random_seed")
+
+#: ACS / decennial tables required by the pipeline, used to backfill minimal configs
+DEFAULT_ACS_REQUIRED = [
+    "B01001", "B09019", "B09020", "C24030", "B23025", "C24010", "B11016",
+    "B11012", "B23009", "B11004", "B19001", "B22010", "B09021", "B09018",
+    "B11001H", "B11001I", "B25006",
+]
+DEFAULT_DEC_REQUIRED = ["P43", "P18"]
 
 
 def _merge_dict(base, override):
@@ -16,27 +46,40 @@ def _merge_dict(base, override):
     return base
 
 
-def load_config(base_dir=None):
-    cfg_dir = base_dir if base_dir is not None else BASE_DIR
-    cfg_path = os.path.join(cfg_dir, "config.json")
-    with open(cfg_path, "r") as f:
+def load_config(base_dir=None, path=None):
+    """Load a config file, applying any sibling ``config.local.json`` overrides.
+
+    Args:
+        base_dir: directory holding ``config.json``. Defaults to the package
+            directory (the shipped template).
+        path: explicit path to a config file; overrides `base_dir`.
+
+    Returns:
+        dict: the config.
+    """
+    if path is not None:
+        cfg_path = path
+        cfg_dir = os.path.dirname(os.path.abspath(path))
+    else:
+        cfg_dir = base_dir if base_dir is not None else BASE_DIR
+        cfg_path = os.path.join(cfg_dir, "config.json")
+
+    if not os.path.exists(cfg_path):
+        raise ConfigError(f"Config file not found: {cfg_path}")
+    with open(cfg_path) as f:
         config = json.load(f)
 
     # Optional untracked local overrides for machine-specific values.
     local_cfg_path = os.path.join(cfg_dir, "config.local.json")
     if os.path.exists(local_cfg_path):
-        with open(local_cfg_path, "r") as f:
-            local_cfg = json.load(f)
-        config = _merge_dict(config, local_cfg)
+        with open(local_cfg_path) as f:
+            config = _merge_dict(config, json.load(f))
 
     return config
 
 
-SENSITIVE_CONFIG_KEYS = ("census_api_key", "julia_env_path")
-
-
 def _template_config(config):
-    """Return a copy safe to ship/write as the package template (no secrets)."""
+    """A copy safe to ship as the package template (no secrets)."""
     template = dict(config)
     for key in SENSITIVE_CONFIG_KEYS:
         template[key] = None
@@ -44,126 +87,118 @@ def _template_config(config):
 
 
 def save_config(config, config_path=None, *, sanitize=False):
-    cfg_path = config_path if config_path is not None else os.path.join(BASE_DIR, "config.json")
-    payload = _template_config(config) if sanitize else config
-    # Ensure target directory exists when writing to a custom location
-    os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
-    with open(cfg_path, "w") as f:
-        json.dump(payload, f, indent=4)
+    """Write `config` as JSON.
+
+    Args:
+        config: the config dict.
+        config_path: destination path, or a directory to write ``config.json`` into.
+            Defaults to the run's own ``path`` directory.
+        sanitize: blank out secrets first (used only for the packaged template).
+    """
+    if config_path is None:
+        config_path = os.path.join(config.get("path", "."), "config.json")
+    elif os.path.isdir(config_path):
+        config_path = os.path.join(config_path, "config.json")
+
+    parent = os.path.dirname(os.path.abspath(config_path))
+    os.makedirs(parent, exist_ok=True)
+    with open(config_path, "w") as f:
+        json.dump(_template_config(config) if sanitize else config, f, indent=4)
+    return config_path
 
 
 def compute_decennial_year(main_year):
+    """The decennial census vintage that applies to `main_year`."""
     try:
-        return 2020 if int(main_year) >= 2020 else 2010
-    except Exception:
-        return 2010
+        year = int(main_year)
+    except (TypeError, ValueError):
+        raise ConfigError(
+            f"main_year must be an integer year, got {main_year!r}."
+        ) from None
+    return 2020 if year >= 2020 else 2010
 
 
-def update_config_values(config,
-                         census_api_key=None,
-                         main_year=None,
-                         geos=None,
-                         commute_states=None,
-                         use_pums=None,
-                         path=None,
-                         julia_env_path=None):
-    # Fall back to environment variables for sensitive/user-specific values
-    if census_api_key is None:
-        census_api_key = os.environ.get("CENSUS_API_KEY")
-    if julia_env_path is None:
-        julia_env_path = os.environ.get("JULIA_ENV_PATH")
+def update_config_values(config, **overrides):
+    """Apply user overrides to `config` in place, falling back to the environment.
 
-    if census_api_key is not None:
-        config["census_api_key"] = census_api_key
-    if main_year is not None:
-        config["main_year"] = main_year
-        config["decennial_year"] = compute_decennial_year(main_year)
-    if geos is not None:
-        config["geos"] = geos
-    if commute_states is not None:
-        config["commute_states"] = commute_states
-    if use_pums is not None:
-        config["use_pums"] = use_pums
-    if path is not None:
-        config["path"] = path
-    if julia_env_path is not None:
-        config["julia_env_path"] = julia_env_path
+    Only keys in :data:`OVERRIDE_KEYS` are accepted; anything else is a typo and is
+    reported rather than silently ignored. ``None`` values mean "leave unchanged".
+    """
+    unknown = set(overrides) - set(OVERRIDE_KEYS)
+    if unknown:
+        raise ConfigError(
+            f"Unknown config override(s): {sorted(unknown)}. "
+            f"Valid overrides: {list(OVERRIDE_KEYS)}"
+        )
+
+    # Sensitive/user-specific values fall back to the environment
+    if overrides.get("census_api_key") is None:
+        overrides["census_api_key"] = os.environ.get("CENSUS_API_KEY")
+
+    for key, value in overrides.items():
+        if value is not None:
+            config[key] = value
+    if overrides.get("main_year") is not None:
+        config["decennial_year"] = compute_decennial_year(overrides["main_year"])
+
+    config.setdefault("acs_required", list(DEFAULT_ACS_REQUIRED))
+    config.setdefault("dec_required", list(DEFAULT_DEC_REQUIRED))
     return config
 
 
-class WriteConfig:
-    def __init__(self,
-                 census_api_key=None,
-                 main_year=None,
-                 geos=None,
-                 commute_states=None,
-                 use_pums=None,
-                 path=None,
-                 julia_env_path=None,
-                 pars=None,
-                 config_dict=None,
-                 base_dir=None):
-        pars = pars or {}
-        self.base_dir = base_dir if base_dir is not None else BASE_DIR
-        # Load base template from the package directory unless a dict is provided
-        self.template_config_path = os.path.join(self.base_dir, "config.json")
-        path = pars.get("path") if path is None else path
-        if path is not None:
-            # If path is a directory, append 'config.json' to it
-            if os.path.isdir(path):
-                self.path = os.path.join(path, "config.json")
-            else:
-                self.path = path
-        else:
-            self.path = self.template_config_path
-        if config_dict is None:
-            config_dict = pars.get("config_dict")
-        self.config = config_dict if config_dict is not None else load_config(self.base_dir)
-        self.overrides = {
-            "census_api_key": pars.get("census_api_key") if census_api_key is None else census_api_key,
-            "main_year": pars.get("main_year") if main_year is None else main_year,
-            "geos": pars.get("geos") if geos is None else geos,
-            "commute_states": pars.get("commute_states") if commute_states is None else commute_states,
-            "use_pums": pars.get("use_pums") if use_pums is None else use_pums,
-            "path": path,
-            "julia_env_path": pars.get("julia_env_path") if julia_env_path is None else julia_env_path,
-        }
-        
-        self.run_all()
+def validate_config(config):
+    """Check a config for the mistakes that otherwise surface deep in the pipeline.
 
-    def run_all(self):
-        print("")
-        print("============================================================")
-        print("Running WriteConfig()")
-        print("============================================================")
-        update_config_values(
-            self.config,
-            census_api_key=self.overrides["census_api_key"],
-            main_year=self.overrides["main_year"],
-            geos=self.overrides["geos"],
-            commute_states=self.overrides["commute_states"],
-            use_pums=self.overrides["use_pums"],
-            path=self.overrides["path"],
-            julia_env_path=self.overrides["julia_env_path"],
+    Raises:
+        ConfigError: if a required key is missing or a value is unusable.
+    """
+    for key in ("path", "main_year", "geos"):
+        if not config.get(key):
+            raise ConfigError(f"config is missing required key {key!r}.")
+
+    if not isinstance(config["geos"], list | tuple) or not config["geos"]:
+        raise ConfigError("config['geos'] must be a non-empty list of state/county FIPS codes.")
+
+    compute_decennial_year(config["main_year"])  # raises if unparseable
+
+    # Traits are carried generically, but only PUMS-derived ones will have values,
+    # and CO does not target them --- worth saying once, up front.
+    traits = config.get("additional_traits") or []
+    if not isinstance(traits, list | tuple):
+        raise ConfigError("config['additional_traits'] must be a list of column names.")
+
+    if config.get("random_seed") is None:
+        warnings.warn(
+            "No random_seed set: this run will not be reproducible. "
+            "Pass seed=... or set config['random_seed'].",
+            stacklevel=3,
         )
-        # User output path may include secrets for local runs; package template never should.
-        if os.path.abspath(self.path) != os.path.abspath(self.template_config_path):
-            save_config(self.config, self.path)
-            save_config(self.config, self.template_config_path, sanitize=True)
-        else:
-            save_config(self.config, self.template_config_path, sanitize=True)
-        print("-- Updated config.json with parameter dictionary")
-
-    def get_pars(self):
-        with open(self.path, "r") as f:
-            cfg = json.load(f)
-        print(json.dumps(cfg, indent=2))
+    return config
 
 
-def main():
-    runner = WriteConfig()
-    runner.run_all()
+def make_config(path=None, *, base_dir=None, template=None, save=False, **overrides):
+    """Build a run configuration from the packaged template plus overrides.
 
+    Args:
+        path: output directory for the run (also where results are written).
+        base_dir: directory to load the template from; defaults to the package.
+        template: a full config dict to use instead of loading a template.
+        save: if True, also write ``<path>/config.json``.
+        **overrides: any of :data:`OVERRIDE_KEYS`.
 
-if __name__ == "__main__":
-    main()
+    Returns:
+        dict: the effective config.
+
+    Example::
+
+        cfg = geopops.make_config(path="data", geos=["45083"], main_year=2019,
+                                  commute_states=["45", "37"], use_pums=["45", "37"])
+    """
+    config = dict(template) if template is not None else load_config(base_dir)
+    if path is not None:
+        overrides["path"] = path
+    update_config_values(config, **overrides)
+    validate_config(config)
+    if save:
+        save_config(config)
+    return config

@@ -5,13 +5,16 @@ build/
 dist/
 wheels/
 *.egg-info
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Virtual environments
 .venv
 
-
 .DS_Store
 
+# Secrets: real credentials live in .env (see .env.example)
 .env
 
 # Ignore local/machine-specific config overrides (keep packaged config.json tracked)
@@ -20,7 +23,8 @@ src/geopops/config.local.json
 
 uv.lock
 
-tutorials/
-tests/
+# Test *data* is large and downloaded, but test *code* is tracked
+tests/data/
+tests/**/data/
 
 *.pptx

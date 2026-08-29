@@ -12,11 +12,8 @@ You should have received a copy of the GNU Affero General Public License along w
 
 import pandas as pd
 import numpy as np
-from numpy import array as arr
 import geopandas as gpd
-from shapely.geometry.point import Point
 import os
-import shutil
 from glob import glob
 import json
 
@@ -24,7 +21,7 @@ from . import ipfn
 
 def tryJSON(filename):
     try:
-        with open(filename, 'r') as f:
+        with open(filename) as f:
             d = json.load(f)
     except Exception as e:
         print("warning: ",e)
@@ -47,7 +44,7 @@ def lrRound(v):
     vrem = np.int64(np.round(sum(v) - sum(vrnd)))
     vidxs = verr.index[np.flip(np.argsort(verr.values))]
     for i in range(vrem):
-        vrnd[vidxs[i]] += 1    
+        vrnd[vidxs[i]] += 1
     return vrnd
 
 def read_census(file_list, geos, usecols, columns):
@@ -67,16 +64,16 @@ def read_census(file_list, geos, usecols, columns):
 def read_acs(table,geos=None):
     filematch = ''.join(['*.', table, '-Data.*'])
     with os.scandir(os.path.join(OUTPUT_DIR, "census")) as d:
-        files = [glob(os.path.join(f,filematch))[0] for f in d 
+        files = [glob(os.path.join(f,filematch))[0] for f in d
                  if f.is_dir() and not f.name.startswith(".")]
-    return read_census(files, geos, 
+    return read_census(files, geos,
                        (lambda x: (x=='Geography') or (str.split(x,'!!')[0]=='Estimate')),
                        (lambda x: ''.join([table,':',*str.split(x,'!!')[2:]])))
 
 def read_decennial(table,geos=None):
     filematch = ''.join(['*.', table, '-Data.*'])
     with os.scandir(os.path.join(OUTPUT_DIR, "census")) as d:
-        files = [glob(os.path.join(f,filematch))[0] for f in d 
+        files = [glob(os.path.join(f,filematch))[0] for f in d
                  if f.is_dir() and not f.name.startswith(".")]
     return read_census(files, geos,
                        (lambda x: (x=='Geography') or (str.split(x,'!!')[0]=='Total')),
@@ -216,15 +213,13 @@ def read_psamp(LODES_cutoff, ind_codes, occ_codes):
                 'CIT':str,'FER':str,'LANX':str,'DIS':str,'RAC1P':str,'HISP':str,'PAP':"Int64"}
 
     psamp = read_pums("psam_p",psamp_dtype)
-    
+
     ####
     # Convert all string columns from float format to proper strings
     # Some columns need leading zeros preserved (2-digit codes)
     # print('SCHG before',psamp['SCHG'].unique())
-    columns_needing_zeros = ['SCHG', 'SCHL'] # 'NAICSP', 'SOCP', 'COW', 'POWPUMA', 'POWSP', 'JWTRNS', 'WKL', 'WKW', 'WRK', 'SFN', 'SFR', 'CIT', 'FER', 'LANX'
-    
     for col, dtype in psamp_dtype.items():
-        if col in psamp.columns and dtype == str:
+        if col in psamp.columns and dtype is str:
             psamp[col] = psamp[col].astype(str).str.replace('.0', '')
             # Add leading zeros for specific columns that need them
             # if col in columns_needing_zeros:
@@ -237,12 +232,12 @@ def read_psamp(LODES_cutoff, ind_codes, occ_codes):
     # psamp['ESR'] = psamp['ESR'].astype(str).str.replace('.0', '').replace('nan', '6').replace('', '6')
     # print('test',psamp['SCHG'].unique())
     ####
-    
+
     # Normalize PUMA to fixed-width code so keys align with crosswalk-derived st_puma (STATE + 5-digit PUMA).
     psamp['ST'] = psamp['ST'].astype(str).str.strip()
     psamp['PUMA'] = psamp['PUMA'].astype(str).str.strip().str.zfill(5)
     psamp['st_puma'] = psamp['ST'] + psamp['PUMA']
-    psamp['sch_grade'] = psamp['SCHG'].map(dict(zip([str(x) for x in range(1,17)], ['p','k',*[str(x) for x in range(1,13)],'c','g'])))
+    psamp['sch_grade'] = psamp['SCHG'].map(dict(zip([str(x) for x in range(1,17)], ['p','k',*[str(x) for x in range(1,13)],'c','g'], strict=False)))
     # print('sch_grade',psamp['sch_grade'].unique())
     ## using 2-digit industry and occupation codes
     psamp["industry"] = psamp["NAICSP"].fillna("").str.slice(0,2)
@@ -371,9 +366,9 @@ def read_hsamp(ptotals, ADJINC, inc_cats, inc_cols):
 
     hsamp = read_pums("psam_h",hsamp_dtype)
     hsamp = hsamp[(hsamp['NP']>0) & (hsamp['TYPE'] == '1')]
-    
+
     for col, dtype in hsamp_dtype.items():
-        if col in hsamp.columns and dtype == str:
+        if col in hsamp.columns and dtype is str:
             hsamp[col] = hsamp[col].astype(str).str.replace('.0', '')
 
     ## pre-compute census columns so we can generate them quickly from a PUMS subsample:
@@ -519,7 +514,7 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
             "Expected a file matching '*puma_to_cbsa*.*'."
         )
     file = matches[0]
-    
+
     #### puma_to_cbsa ####
     # puma_to_cbsa = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","cbsa","afact"])
     candidate_cols = {"state", "puma12", "puma22", "cbsa", "cbsa20", "afact"}
@@ -532,7 +527,7 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
         raise ValueError(f"Missing required columns in puma_to_cbsa crosswalk {file}: {missing}. Found: {list(puma_to_cbsa.columns)}")
     puma_to_cbsa = puma_to_cbsa[list(required_found)].copy()
     puma_to_cbsa.rename(columns={col_puma: "puma12", col_cbsa: "cbsa"}, inplace=True)
-    # now use only "puma" and "cbsa" 
+    # now use only "puma" and "cbsa"
     puma_to_cbsa['st_puma'] = puma_to_cbsa['state'] + puma_to_cbsa['puma12'].str.zfill(5)
     puma_to_cbsa.loc[puma_to_cbsa['cbsa']==" ", 'cbsa'] = "none"
     puma_to_cbsa = puma_to_cbsa.groupby('st_puma',group_keys=True).apply(lambda g: g[g['afact'] == g['afact'].max()], include_groups=False).reset_index()
@@ -541,7 +536,7 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
     samp_geo = samp_geo.merge(puma_to_cbsa, how='left', on='st_puma')
     ## some pumas span counties; associate each with its primary county
     ## -- we're only looking up samples by county when it contains multiple pumas
-    
+
     #### puma_to_county ####
     matches = glob(os.path.join(OUTPUT_DIR, "geo", "*puma_to_county*.*"))
     if not matches:
@@ -570,7 +565,7 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
             "Expected a file matching '*puma_urban_rural*.*'."
         )
     file = matches[0]
-    
+
     #### puma_urban_rural ####
     # puma_ur = pd.read_csv(file,dtype=str,skiprows=[1],usecols=["state","puma12","ur","afact"])
     candidate_cols = {"state", "puma12", "puma22", "ur", "afact"}
@@ -670,14 +665,14 @@ def read_geo_xwalk(cbg_index):
     tpum['st_puma'] = tpum['STATEFP']+tpum['PUMA5CE'].str.zfill(5)
     tpum['tract'] = tpum['STATEFP']+tpum['COUNTYFP']+tpum['TRACTCE']
     ## note, population 0 cbgs are not in geocorr
-    cbg_geo = pd.DataFrame({'Geo':cbg_index, 
+    cbg_geo = pd.DataFrame({'Geo':cbg_index,
                             'tract':cbg_index.map(lambda x: x[0:-1]),
                             'county':cbg_index.map(lambda x: x[0:5])})
     cbg_geo = cbg_geo.merge(tpum, how='left', on='tract').set_index('Geo', verify_integrity=True)
-    
+
     cbg_geo.to_csv(os.path.join(PROCESSED_DIR,'cbg_geo_test.csv'))
-    
-    
+
+
     #### cbg_to_cbsa ####
     if main_year is not None and main_year >= 2020:
         cbg_cbsa_pattern = "*geocorr2022*cbg_to_cbsa*.*"
@@ -705,7 +700,7 @@ def read_geo_xwalk(cbg_index):
         cbg_to_cbsa['bg']
     cbg_to_cbsa.set_index('Geo', inplace=True, verify_integrity=True)
     # cbg_to_cbsa.to_csv(os.path.join(PROCESSED_DIR,'cbg_to_cbsa_test.csv'))
-    
+
     #### cbg_urban_rural ####
     if main_year is not None and main_year >= 2020:
         cbg_ur_pattern = "*geocorr2022*cbg_urban_rural*.*"
@@ -773,7 +768,7 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
     df_gq['group quarters:65 and over'] = df_gq['adult_65o_in_group_quarters']
 
     ## ignore cbgs with less than 20 in gq's
-    df_gq = df_gq.loc[df_gq['group quarters:'] > 19, 
+    df_gq = df_gq.loc[df_gq['group quarters:'] > 19,
             ['group quarters:', 'group quarters:under 18', 'group quarters:18 to 64', 'group quarters:65 and over']].copy(deep=True)
 
     ## from previous decennial census
@@ -856,9 +851,9 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
     ## use employment status code (ESR):
     ##  assume that everyone in military GQ is employed in armed forces
     ##  and anyone in GQ not employed by armed forces is in civilian GQ
-    s_noninst_civ = p_summary.loc[(p_summary['RELSHIPP'] == '38') 
+    s_noninst_civ = p_summary.loc[(p_summary['RELSHIPP'] == '38')
                                 & (p_summary['armed_forces'] != 1)
-                                & (p_summary['AGEP'] > 17) 
+                                & (p_summary['AGEP'] > 17)
                                 & (p_summary['AGEP'] < 65)].copy(deep=True)
     ## note, employment stats generated here still need to be reconciled with census data in next step
     cols = ['commuter','work_from_home','com_LODES_low','com_LODES_high',
@@ -867,16 +862,16 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
     pcols = [c+'_p|ninst1864civ' for c in cols]
 
     ## PWGTP = individual "weight" according to the pums sample data
-    for c,pc in zip(cols,pcols):
+    for c,pc in zip(cols,pcols, strict=False):
         s_noninst_civ[pc] = s_noninst_civ[c] * s_noninst_civ['PWGTP']
-    s_noninst_mil = p_summary.loc[(p_summary['RELSHIPP'] == '38') 
+    s_noninst_mil = p_summary.loc[(p_summary['RELSHIPP'] == '38')
                                 & (p_summary['armed_forces'] == 1)
-                                & (p_summary['AGEP'] > 17) 
+                                & (p_summary['AGEP'] > 17)
                                 & (p_summary['AGEP'] < 65)].copy(deep=True)
 
     cols_mil = [c+'_p|milGQ' for c in cols]
 
-    for c,pc in zip(cols,cols_mil):
+    for c,pc in zip(cols,cols_mil, strict=False):
         s_noninst_mil[pc] = s_noninst_mil[c] * s_noninst_mil['PWGTP']
 
     ## not many GQ residents represented in PUMS samples
@@ -900,11 +895,11 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
         agg_mil = s_noninst_mil[['PWGTP',*cols_mil]].sum()
 
     p_agg_mil = agg_mil.apply(lambda x: x/agg_mil['PWGTP']).drop("PWGTP").fillna(0.0)
-    
+
     df_gq[p_agg_civ.index] = p_agg_civ.values
     df_gq[p_agg_mil.index] = p_agg_mil.values
 
-    keep_cols = ['group quarters:', 'group quarters:under 18', 'group quarters:18 to 64', 'group quarters:65 and over', 
+    keep_cols = ['group quarters:', 'group quarters:under 18', 'group quarters:18 to 64', 'group quarters:65 and over',
         'p_u18_inst', 'p_18_64_inst', 'p_65o_inst', 'p_18_64_noninst_civil', 'p_18_64_noninst_mil',
         *pcols, *cols_mil]
 
@@ -924,7 +919,7 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
 
 
 def read_ind_df(geos, ind_codes):
-   
+
     ## industries
     C24030 = read_acs("C24030",geos)
     ## civilian vs military workforce
@@ -947,12 +942,12 @@ def read_ind_df(geos, ind_codes):
     ind_df = C24030[["C24030:"]].copy(deep=True)
     for k in ind_codes:
         ind_df = ind_df.join(C24030['C24030:All:'+ind_codes[k][1]].rename('C24030:'+k))
-   
+
     return ind_df
 
 
 def read_occ_df(geos, occ_codes):
-   
+
     ## occupations
     C24010 = read_acs("C24010",geos)
     ## civilian vs military workforce
@@ -978,7 +973,7 @@ def read_occ_df(geos, occ_codes):
     occ_df = C24010[["C24010:"]].copy(deep=True)
     for k in occ_codes:
         occ_df = occ_df.join(C24010['C24010:All:'+occ_codes[k][1]].rename('C24010:'+k))
-    
+
     return occ_df
 
 
@@ -999,24 +994,24 @@ def read_occ_df(geos, occ_codes):
 
 #     ## family / nonfamily households by size
 #     B11016 = read_acs('B11016',geos)
-    
+
 #     ############### START HERE ################
 #     # B11012
-#     # 0.	['', 
-#     # 1.	'With children of the householder under 18 years', 
-#     # 2.	'With no children of the householder under 18 years', 
-#     # 3.	'', 
-#     # 4.	'With children of the householder under 18 years', 
-#     # 5.	'With no children of the householder under 18 years', 
-#     # 6.	'', 
-#     # 7.	'Living alone', 
-#     # 8.	'With children of the householder under 18 years', 
-#     # 9.	'With relatives, no children of the householder under 18 years', 
-#     # 10.	'With only nonrelatives present', 
-#     # 11.	'', 
-#     # 12.	'Living alone', 
-#     # 13.	'With children of the householder under 18 years', 
-#     # 14.	'With relatives, no children of the householder under 18 years', 
+#     # 0.	['',
+#     # 1.	'With children of the householder under 18 years',
+#     # 2.	'With no children of the householder under 18 years',
+#     # 3.	'',
+#     # 4.	'With children of the householder under 18 years',
+#     # 5.	'With no children of the householder under 18 years',
+#     # 6.	'',
+#     # 7.	'Living alone',
+#     # 8.	'With children of the householder under 18 years',
+#     # 9.	'With relatives, no children of the householder under 18 years',
+#     # 10.	'With only nonrelatives present',
+#     # 11.	'',
+#     # 12.	'Living alone',
+#     # 13.	'With children of the householder under 18 years',
+#     # 14.	'With relatives, no children of the householder under 18 years',
 #     # 15.	'With only nonrelatives present']
 
 def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_cols, ind_codes, occ_codes):
@@ -1033,45 +1028,45 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     B11016 = read_acs('B11016',geos)
     ## household types married/cohab/single/alone/own_ch_u18/other_rels/only_nonrels
     B11012 = read_acs('B11012',geos)
-    
+
     # Make a list of column names for B11012. Wording is different in 2019 and 2020.
     B11012_lst = [col.split(':')[2] for col in B11012.columns if len(col.split(':')) > 2]
     # print('***** B11012_lst ******', B11012_lst)
     #2019
-    # 0 ['', 
-    # 1 'With own children under 18 years', 
-    # 2 'With no own children under 18 years', 
-    # 3 '', 
-    # 4 'With own children of the householder under 18 years', 
-    # 5 'With no own children of the householder under 18 years', 
-    # 6 '', 
-    # 7 'Living alone', 
-    # 8 'With own children under 18 years', 
-    # 9 'With relatives, no own children under 18 years', 
-    # 10 'With only nonrelatives present', 
-    # 11 '', 
-    # 12 'Living alone', 
-    # 13 'With own children under 18 years', 
-    # 14 'With relatives, no own children under 18 years', 
+    # 0 ['',
+    # 1 'With own children under 18 years',
+    # 2 'With no own children under 18 years',
+    # 3 '',
+    # 4 'With own children of the householder under 18 years',
+    # 5 'With no own children of the householder under 18 years',
+    # 6 '',
+    # 7 'Living alone',
+    # 8 'With own children under 18 years',
+    # 9 'With relatives, no own children under 18 years',
+    # 10 'With only nonrelatives present',
+    # 11 '',
+    # 12 'Living alone',
+    # 13 'With own children under 18 years',
+    # 14 'With relatives, no own children under 18 years',
     # 15 'With only nonrelatives present']
     #2020
-    # 0 ['', 
-    # 1 'With children of the householder under 18 years', 
-    # 2 'With no children of the householder under 18 years', 
-    # 3 '', 
-    # 4 'With children of the householder under 18 years', 
-    # 5 'With no children of the householder under 18 years', 
-    # 6 '', 
-    # 7 'Living alone', 
-    # 8 'With children of the householder under 18 years', 
-    # 9 'With relatives, no children of the householder under 18 years', 
-    # 10 'With only nonrelatives present', 
-    # 11 '', 
-    # 12 'Living alone', 
-    # 13 'With children of the householder under 18 years', 
-    # 14 'With relatives, no children of the householder under 18 years', 
+    # 0 ['',
+    # 1 'With children of the householder under 18 years',
+    # 2 'With no children of the householder under 18 years',
+    # 3 '',
+    # 4 'With children of the householder under 18 years',
+    # 5 'With no children of the householder under 18 years',
+    # 6 '',
+    # 7 'Living alone',
+    # 8 'With children of the householder under 18 years',
+    # 9 'With relatives, no children of the householder under 18 years',
+    # 10 'With only nonrelatives present',
+    # 11 '',
+    # 12 'Living alone',
+    # 13 'With children of the householder under 18 years',
+    # 14 'With relatives, no children of the householder under 18 years',
     # 15 'With only nonrelatives present']
-    
+
     ## family households, by # workers _in family_ (not other workers in hh), presence of own_ch_u18, and marriage status
     B23009 = read_acs('B23009',geos)
     ## family households, by marriage status and presence of _related_ children in age groups
@@ -1117,12 +1112,12 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
             B11004[':'.join(['B11004','Other family:Female householder, no spouse present:With related children of the householder under 18 years',x])]
 
     # 2019 and 2020 have slightly different wording so pull from B11012_lst
-    # Ex 2019: for x in ['Living alone','With own children under 18 years','With relatives, no own children under 18 years','With only nonrelatives present']:      
+    # Ex 2019: for x in ['Living alone','With own children under 18 years','With relatives, no own children under 18 years','With only nonrelatives present']:
     for x in [B11012_lst[12],B11012_lst[13],B11012_lst[14],B11012_lst[15]]:
         B11012[':'.join(['B11012','Single householder',x])] = \
             B11012[':'.join(['B11012','Female householder, no spouse or partner present',x])] + \
             B11012[':'.join(['B11012','Male householder, no spouse or partner present',x])]
-            
+
     ## combine married and cohab households
     B11012['B11012:Two-partner household:With children of the householder under 18 years'] = \
         B11012[f'B11012:Married-couple household:{B11012_lst[1]}'] + \
@@ -1131,7 +1126,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     B11012['B11012:Two-partner household:With no children of the householder under 18 years'] = \
         B11012[f'B11012:Married-couple household:{B11012_lst[2]}'] + \
         B11012[f'B11012:Cohabiting couple household:{B11012_lst[5]}'] # With no own children of the householder under 18 years
-            
+
     ## combine married and unmarried partners
     B09021['B09021:Householder living with partner or partner of householder'] = \
         B09021['B09021:Householder living with spouse or spouse of householder'] + B09021['B09021:Householder living with unmarried partner or unmarried partner of householder']
@@ -1152,7 +1147,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
         .apply(lambda s: s * gq_stats['p_18_64_noninst_civil'] * gq_stats['group quarters:18 to 64']) \
         .rename(columns={
             'ind_'+k+'_p|ninst1864civ':'C24030:'+k for k in ind_codes.keys()})
-    
+
     ind_mil_gq = gq_stats[['ind_'+k+'_p|milGQ' for k in ind_codes.keys()]].copy(deep=True) \
         .apply(lambda s: s * gq_stats['p_18_64_noninst_mil'] * gq_stats['group quarters:18 to 64']) \
         .rename(columns={
@@ -1190,7 +1185,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
         ).rename("min_hh")
 
     df_bounds = pd.DataFrame({'total_workers':ind_df["C24030:"]})
-    df_bounds = df_bounds.join(min_hh_B23009) 
+    df_bounds = df_bounds.join(min_hh_B23009)
     ## in some places minimum # "workers" per table B23009 = more than total people in labor force??
     df_bounds["min_hh"] = df_bounds[["total_workers","min_hh"]].min(axis=1)
     ## using total people in hh as max (no other reliable max; B23009 only counts families)
@@ -1229,7 +1224,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
 
     occ_hh = occ_df[['C24010:'+k for k in occ_codes.keys()]].copy(deep=True) \
         .apply(lambda s: s * occ_df["_p_hh"])
-    
+
     ## IPF for each location that has gq workers
     idxs = gq_stats.index.intersection(has_puma_idx).intersection(df_bounds.index[df_bounds["_gq_workers"]>0])
     df_bounds = df_bounds.loc[idxs,:].copy(deep=True)
@@ -1238,7 +1233,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     (df_bounds["hh_workers"] <= df_bounds["max_hh"]).all(),
     (df_bounds["hh_workers"] >= df_bounds["min_hh"]).all()]):
         print("warning: could not reconcile household and GQ employment sums for some locations")
-    
+
     ## industries
     for i in idxs:
         ## rows are: hh, civ gq, mil gq
@@ -1248,7 +1243,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
         colsums = ind_col_totals.loc[i,:].values
 
         m = np.stack([ind_hh.loc[i,:].astype(float).values,
-                    ind_civ_gq.loc[i,:].astype(float).values, 
+                    ind_civ_gq.loc[i,:].astype(float).values,
                     ind_mil_gq.loc[i,:].astype(float).values])
 
         ## ipf handles 0's poorly; replace with 0.5
@@ -1269,7 +1264,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
         colsums = occ_col_totals.loc[i,:].values
 
         m = np.stack([occ_hh.loc[i,:].astype(float).values,
-                    occ_civ_gq.loc[i,:].astype(float).values, 
+                    occ_civ_gq.loc[i,:].astype(float).values,
                     occ_mil_gq.loc[i,:].astype(float).values])
 
         ## ipf handles 0's poorly; replace with 0.5
@@ -1280,8 +1275,8 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
         occ_hh.loc[i,:] = new_m[0,:]
         occ_civ_gq.loc[i,:] = new_m[1,:]
         occ_mil_gq.loc[i,:] = new_m[2,:]
-        
-        
+
+
     ## check for NAN
     ind_hh.to_csv(os.path.join(PROCESSED_DIR,'ind_hh_test.csv'))
     ind_civ_gq.to_csv(os.path.join(PROCESSED_DIR,'ind_civ_gq_test.csv'))
@@ -1289,9 +1284,9 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     occ_hh.to_csv(os.path.join(PROCESSED_DIR,'occ_hh_test.csv'))
     occ_civ_gq.to_csv(os.path.join(PROCESSED_DIR,'occ_civ_gq_test.csv'))
     occ_mil_gq.to_csv(os.path.join(PROCESSED_DIR,'occ_mil_gq_test.csv'))
-    
-    
-        
+
+
+
     ## round to integer (preserve row sums)
     ind_hh = ind_hh.apply(lrRound,axis=1)
     ind_civ_gq = ind_civ_gq.apply(lrRound,axis=1)
@@ -1299,8 +1294,8 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     occ_hh = occ_hh.apply(lrRound,axis=1)
     occ_civ_gq = occ_civ_gq.apply(lrRound,axis=1)
     occ_mil_gq = occ_mil_gq.apply(lrRound,axis=1)
-    
-    
+
+
 
     ## save gq employment counts for synth pop construction
     ind_civ_gq.join(occ_civ_gq).to_csv(os.path.join(PROCESSED_DIR,'gq_civilian_workers.csv'))
@@ -1327,7 +1322,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     acs_tables['county'] = acs_tables.index.map(lambda x: x[0:5])
 
     ## income data
-    for k,v in zip(inc_cats,inc_cols):
+    for k,v in zip(inc_cats,inc_cols, strict=False):
         acs_tables['B19001:'+k] = acs_tables[['B19001:'+x for x in v]].sum(axis=1)
 
     # print("Writing Census targets")
@@ -1358,7 +1353,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
 ## use JT01, "primary" jobs (because JT00 counts 2+ jobs for the same individual)
 ## "main" = work and live in state
 ## "aux" = work in state, live outside state
-## 
+##
 ## need:
 ##  main file for every state in the synth area, named *od_main_JT01*
 ##  aux file for every state in the synth area, named *od_aux_JT01*
@@ -1388,9 +1383,9 @@ def read_origin_destination(geos, commute_states):
         work_in_area = np.any([od['w_geocode'].str.startswith(g) for g in geos],axis=0)
         ## live in the synth area, work anywhere in the state(s) with od files provided
         live_in_area = np.any([od['h_geocode'].str.startswith(g) for g in geos],axis=0)
-    else: 
+    else:
         ## if no synth area geos specified, assume work area is synth area
-        main_states = od.loc[od["main"]==True, "w_state"].unique()
+        main_states = od.loc[od["main"].astype(bool), "w_state"].unique()
         work_in_area = od["w_state"].isin(main_states)
         live_in_area = od["h_state"].isin(main_states)
 
@@ -1530,7 +1525,7 @@ def calc_commute_marginals(geos,ind_codes,ind_keys,commute_states):
     wac_by_dest.loc["outside",ind_keys] = n_commuting_out * p_by_ind
 
     ## save for next step
-    
+
     od_matrix.to_csv(os.path.join(PROCESSED_DIR,"work_od_prop.csv"),float_format="%.8g")
     ind_df.round(2).to_csv(os.path.join(PROCESSED_DIR,"work_io_sums.csv"))
     wac_by_dest.round(2).to_csv(os.path.join(PROCESSED_DIR,"work_id_est_sums.csv"))
@@ -1555,7 +1550,15 @@ def calc_commute_marginals(geos,ind_codes,ind_keys,commute_states):
 #                                2,500-4,999 Employees
 #N1000_4         N       Number of Establishments: Employment Size Class:
 #                                5,000 or More Employees
-def generate_work_sizes():
+def generate_work_sizes(random_seed=None):
+    """Infer a lognormal employer-size distribution per county from CBP size classes.
+
+    Args:
+        random_seed: seed for the size simulation. Passing one makes the inferred
+            distributions reproducible; the previous implementation used numpy's
+            unseeded global RNG, so work sizes varied between otherwise identical runs.
+    """
+    rng = np.random.default_rng(random_seed)
     work_counties = pd.read_csv(os.path.join(PROCESSED_DIR,'work_sizes.csv'),dtype=str)["county"].values
     cbp = read_cbp(work_counties)
     ##
@@ -1566,11 +1569,10 @@ def generate_work_sizes():
     b =   [5,10,20,50,100,250,500,1000,1500,2500,5000,30000]
     ## don't believe 0 cells?
     adj_z = 0.5
-    sim_dist = [np.concatenate([np.random.randint(l,h,np.int64(s)) for (l,h,s) in zip(a,b, 1000*(adj_z+cbp.iloc[r,2:]))]) for r in range(cbp.shape[0])]
+    sim_dist = [np.concatenate([rng.integers(l,h,np.int64(s)) for (l,h,s) in zip(a,b, 1000*(adj_z+cbp.iloc[r,2:]), strict=False)]) for r in range(cbp.shape[0])]
     mu_l = [np.mean(np.log(s)) for s in sim_dist]
-    var_l = [np.var(np.log(s)) for s in sim_dist]
     mu_sz = [np.mean(s) for s in sim_dist]
-    imp_v = [2.0*(np.log(a) - b) for (a,b) in zip(mu_sz, mu_l)]
+    imp_v = [2.0*(np.log(a) - b) for (a,b) in zip(mu_sz, mu_l, strict=False)]
 
     cbp['mu_ln'] = mu_l
     cbp['sigma_ln'] = np.sqrt(imp_v)
@@ -1668,7 +1670,7 @@ class ProcessData:
             cfg_path = os.path.join(self.base_dir, "config.json")
             if not os.path.exists(cfg_path):
                 raise FileNotFoundError(f"config.json file not found at {cfg_path}. Please create this file with the required configuration.")
-            with open(cfg_path, "r") as f:
+            with open(cfg_path) as f:
                 self.config = json.load(f)
 
         # Set module-level variables for use by other functions
@@ -1846,13 +1848,13 @@ class ProcessData:
 
         # Generated sample columns that match each of target_columns, in the same order
         # (generated in read_psamp and read_hsamp)
-        self.sample_columns = ['fam_hh_2', 'fam_hh_3', 'fam_hh_4', 'fam_hh_5', 'fam_hh_6', 'fam_hh_7o', 
-            'non_fam_hh_1', 'non_fam_hh_2', 'non_fam_hh_3', 'non_fam_hh_4', 'non_fam_hh_5', 'non_fam_hh_6', 'non_fam_hh_7o', 
-            'w_own_ch_u18_married_fam_work0', 
+        self.sample_columns = ['fam_hh_2', 'fam_hh_3', 'fam_hh_4', 'fam_hh_5', 'fam_hh_6', 'fam_hh_7o',
+            'non_fam_hh_1', 'non_fam_hh_2', 'non_fam_hh_3', 'non_fam_hh_4', 'non_fam_hh_5', 'non_fam_hh_6', 'non_fam_hh_7o',
+            'w_own_ch_u18_married_fam_work0',
             'w_own_ch_u18_married_fam_work1',
             'w_own_ch_u18_married_fam_work2',
             'w_own_ch_u18_married_fam_work3o',
-            'w_own_ch_u18_unmar_fam_work0', 
+            'w_own_ch_u18_unmar_fam_work0',
             'w_own_ch_u18_unmar_fam_work1',
             'w_own_ch_u18_unmar_fam_work2',
             'w_own_ch_u18_unmar_fam_work3o',
@@ -1865,33 +1867,33 @@ class ProcessData:
             'no_own_ch_u18_unmar_fam_work2',
             'no_own_ch_u18_unmar_fam_work3o',
             'fam_married_w_rel_ch_u6_only',
-            'fam_married_w_rel_ch_u6_and_6_17', 
+            'fam_married_w_rel_ch_u6_and_6_17',
             'fam_married_w_rel_ch_6_17_only',
             'fam_married_no_rel_ch_u18',
-            'fam_unmar_w_rel_ch_u6_only', 
-            'fam_unmar_w_rel_ch_u6_and_6_17', 
+            'fam_unmar_w_rel_ch_u6_only',
+            'fam_unmar_w_rel_ch_u6_and_6_17',
             'fam_unmar_w_rel_ch_6_17_only',
             'fam_unmar_no_rel_ch_u18',
-            'partner_hh_ch_u18', 
-            'partner_hh_no_ch_u18', 
+            'partner_hh_ch_u18',
+            'partner_hh_no_ch_u18',
             'hh_alone',
-            'hh_single_ch_u18', 
-            'hh_single_other_rel', 
+            'hh_single_ch_u18',
+            'hh_single_other_rel',
             'hh_nonrel_only',
             'ch_u18_in_hh',
             'grandch_u18',
             'age_18_34_alone',
-            'age_18_34_partner', 
+            'age_18_34_partner',
             'age_18_34_child_of_hh',
-            'age_18_34_other_rel', 
-            'age_18_34_non_rel', 	   
-            'age_35_64_alone', 
-            'age_35_64_partner', 
+            'age_18_34_other_rel',
+            'age_18_34_non_rel',
+            'age_35_64_alone',
+            'age_35_64_partner',
             'age_35_64_child_of_hh',
-            'age_35_64_other_rel', 
-            'age_35_64_non_rel', 
+            'age_35_64_other_rel',
+            'age_35_64_non_rel',
             'age_65o_alone',
-            'age_65o_partner', 
+            'age_65o_partner',
             'age_65o_other_rel',
             'age_65o_non_rel',
             *self.inc_cats,
@@ -2004,7 +2006,7 @@ class ProcessData:
         """Run the workplace size generation step."""
         self._log("\n*** Running ProcessData.generate_work_sizes() ***")
         self._log("-- Generating employer sizes")
-        generate_work_sizes()
+        generate_work_sizes(random_seed=self.config.get("random_seed"))
         self._log("-- processed/work_sizes.csv")
 
     def generate_schools(self):
@@ -2031,7 +2033,7 @@ class ProcessData:
         self.generate_schools()
         self._log("")
         self._log("All ProcessData() steps complete")
-    
+
     def quality_check(self, *, auto_print=True):
         """Run processed geography alignment checks and optionally print a summary.
 
@@ -2053,11 +2055,10 @@ class ProcessData:
         after `auto_run=True` as well.
         """
         self._log("\n*** Running ProcessData.quality_check() ***")
-        qc = QualityCheck(config_dict=self.config, base_dir=self.base_dir, auto_run=False)
-        qc._results = qc.run_all()  # ensure we return the same object we print
+        qc = QualityCheck(config_dict=self.config, base_dir=self.base_dir, auto_run=True)
         if auto_print:
             qc.print_results()
-        return qc._results
+        return qc.results
 
 def _missingness_summary(df, cols):
     total = len(df)
@@ -2084,7 +2085,7 @@ class QualityCheck:
             self.config = config_dict
         else:
             cfg_path = config_path if config_path is not None else os.path.join(self.base_dir, "config.json")
-            with open(cfg_path, "r") as f:
+            with open(cfg_path) as f:
                 self.config = json.load(f)
 
         self.data_dir = path_override if path_override is not None else self.config.get("path", self.base_dir)
@@ -2146,9 +2147,9 @@ class QualityCheck:
 
     @property
     def results(self):
+        """The diagnostics dict, computing it on first access."""
         if self._results is None:
             self.run_all()
-        self.print_results()
         return self._results
 
     def print_results(self):
@@ -2185,186 +2186,31 @@ class QualityCheck:
         for note in summary["notes"]:
             print(f"  - {note}")
 
+def process_data(config, *, base_dir=None, verbose=1):
+    """Build the processed CO targets and sample pools for a run.
+
+    Args:
+        config: a config dict (see :func:`geopops.make_config`).
+        verbose: 0 for quiet, 1 for progress logging.
+
+    Returns:
+        ProcessData: the completed step, for inspection.
+    """
+    return ProcessData(config_dict=config, base_dir=base_dir, verbose=verbose, auto_run=True)
+
+
+def quality_check(config, *, base_dir=None, print_results=True):
+    """Check that the processed geographies line up before running CO.
+
+    Returns:
+        dict: PUMA coverage and missingness diagnostics.
+    """
+    qc = QualityCheck(config_dict=config, base_dir=base_dir, auto_run=True)
+    if print_results:
+        qc.print_results()
+    return qc.results
+
+
 def main():
     runner = ProcessData(auto_run=False)
     runner.run_all()
-
-
-
-
-
-
-
-def generate_test_targets(geos,geo_xwalk):
-
-    ## B09002 own ch u 18 by age and family type
-    B09002 = read_acs('B09002',geos)
-    ## B19123 Families; by size and public assistance/snap
-    B19123 = read_acs('B19123',geos)
-    ## B22010 households; person with disability
-    B22010 = read_acs('B22010',geos)
-    ## B23008 Own children under 18 years in families and subfamilies
-    B23008 = read_acs('B23008',geos)
-    ## households internet access
-    B28002 = read_acs('B28002',geos)
-    ## B28006 Household population 25 years and over; educational achievement
-    B28006 = read_acs('B28006',geos)
-
-    for x in ["Under 6 years","6 to 17 years"]:
-        B23008[":".join(["B23008",x,"Living with two parents:One parent in labor force"])] = \
-            B23008[":".join(["B23008",x,"Living with two parents:Father only in labor force"])] + \
-            B23008[":".join(["B23008",x,"Living with two parents:Mother only in labor force"])]
-        for y in ["In labor force","Not in labor force"]:
-            B23008[":".join(["B23008",x,"Living with one parent",y])] = \
-                B23008[":".join(["B23008",x,"Living with one parent:Living with father",y])] + \
-                B23008[":".join(["B23008",x,"Living with one parent:Living with mother",y])]
-
-    for x in ["Under 3 years","3 and 4 years","5 years","6 to 11 years","12 to 17 years"]:
-        B09002[":".join(["B09002:In other families:Single householder, no spouse present",x])] = \
-            B09002[":".join(["B09002:In other families:Male householder, no spouse present",x])] + \
-            B09002[":".join(["B09002:In other families:Female householder, no spouse present",x])]
-        
-    for x in ["In married-couple families","In other families:Single householder, no spouse present"]:
-        B09002[":".join(["B09002",x,"3 to 5 years"])] = \
-            B09002[":".join(["B09002",x,"3 and 4 years"])] + \
-            B09002[":".join(["B09002",x,"5 years"])]
-
-    for x in ["Households with 1 or more persons with a disability","Households with no persons with a disability"]:
-        B22010[":".join(["B22010",x])] = \
-            B22010[":".join(["B22010:Household received Food Stamps/SNAP in the past 12 months",x])] + \
-            B22010[":".join(["B22010:Household did not receive Food Stamps/SNAP in the past 12 months",x])]
-        
-    ## join all census tables together
-    acs_tables = B09002.join([B19123,B22010,B23008,B28002,B28006])
-    acs_tables['state'] = acs_tables.index.map(lambda x: x[0:2])
-    acs_tables['county'] = acs_tables.index.map(lambda x: x[0:5])
-
-    ## which census columns to match:
-    target_columns = [
-        'B09002:In married-couple families:Under 3 years',
-        'B09002:In married-couple families:3 to 5 years',
-        'B09002:In married-couple families:6 to 11 years',
-        'B09002:In married-couple families:12 to 17 years',
-        'B09002:In other families:Single householder, no spouse present:Under 3 years',
-        'B09002:In other families:Single householder, no spouse present:3 to 5 years',
-        'B09002:In other families:Single householder, no spouse present:6 to 11 years',
-        'B09002:In other families:Single householder, no spouse present:12 to 17 years',
-        'B19123:2-person families:With cash public assistance income or  households receiving Food Stamps/SNAP benefits in the past 12 months',
-        'B19123:3-person families:With cash public assistance income or  households receiving Food Stamps/SNAP benefits in the past 12 months',
-        'B19123:4-person families:With cash public assistance income or  households receiving Food Stamps/SNAP benefits in the past 12 months',
-        'B19123:5-person families:With cash public assistance income or  households receiving Food Stamps/SNAP benefits in the past 12 months',
-        'B19123:6-person families:With cash public assistance income or  households receiving Food Stamps/SNAP benefits in the past 12 months',
-        'B19123:7-or-more-person families:With cash public assistance income or  households receiving Food Stamps/SNAP benefits in the past 12 months',
-        'B22010:Households with 1 or more persons with a disability',
-        'B23008:Under 6 years:Living with two parents:Both parents in labor force',
-        'B23008:Under 6 years:Living with two parents:One parent in labor force',    
-        'B23008:Under 6 years:Living with two parents:Neither parent in labor force',
-        'B23008:Under 6 years:Living with one parent:In labor force',
-        'B23008:Under 6 years:Living with one parent:Not in labor force',
-        'B23008:6 to 17 years:Living with two parents:Both parents in labor force',
-        'B23008:6 to 17 years:Living with two parents:One parent in labor force',    
-        'B23008:6 to 17 years:Living with two parents:Neither parent in labor force',
-        'B23008:6 to 17 years:Living with one parent:In labor force',
-        'B23008:6 to 17 years:Living with one parent:Not in labor force',
-        "B28002:With an Internet subscription",
-        "B28002:Internet access without a subscription",
-        "B28002:No Internet access",
-        "B28006:Less than high school graduate or equivalency:",
-        "B28006:High school graduate (includes equivalency) , some college or associate's degree :",
-        "B28006:Bachelor's degree or higher:"]
-
-    missing_puma = geo_xwalk.index[geo_xwalk['st_puma'].isna()]
-    acs_tables = acs_tables[~acs_tables.index.isin(missing_puma)].copy(deep=True)
-
-    ## drop cbgs with less than 20 hh
-    acs20 = acs_tables[acs_tables['B22010:'] > 19]
-    acs20[target_columns].to_csv(os.path.join(PROCESSED_DIR,'test_targets.csv'))
-
-    return None
-
-
-def gen_samp_test_cols(ADJINC, inc_cats, inc_cols, LODES_cutoff):
-
-    psamp, ptotals = read_psamp(LODES_cutoff, [], [])
-    hsamp = read_hsamp(ptotals, ADJINC, inc_cats, inc_cols)
-    ## generated sample columns that match each of target_columns, in the same order:
-    sample_columns = ['own_ch_u3_in_fam_married',
-        'own_ch_3_5_in_fam_married',
-        'own_ch_6_11_in_fam_married',
-        'own_ch_12_17_in_fam_married',
-        'own_ch_u3_in_fam_unmar',
-        'own_ch_3_5_in_fam_unmar',
-        'own_ch_6_11_in_fam_unmar',
-        'own_ch_12_17_in_fam_unmar',
-        'fam_hh_2_snap_pap',
-        'fam_hh_3_snap_pap',
-        'fam_hh_4_snap_pap',
-        'fam_hh_5_snap_pap',
-        'fam_hh_6_snap_pap',
-        'fam_hh_7o_snap_pap',
-        'h_1_or_more_with_disab',
-        'esp_2p_2w_age_u6',
-        'esp_2p_1w_age_u6',
-        'esp_2p_nw_age_u6',
-        'esp_1p_1w_age_u6',
-        'esp_1p_nw_age_u6',
-        'esp_2p_2w_age_6_17',
-        'esp_2p_1w_age_6_17',
-        'esp_2p_nw_age_6_17',
-        'esp_1p_1w_age_6_17',
-        'esp_1p_nw_age_6_17',
-        'h_internet_sub',
-        'h_internet_nosub',
-        'h_no_internet',
-        'edu_not_hsgrad_age_25o',
-        'edu_hs_or_somecoll_age_25o',
-        'edu_bach_or_higher_age_25o']
-
-    ## csv of household samples
-    hsamp[sample_columns].to_csv(os.path.join(PROCESSED_DIR,'test_samples.csv'))
-
-    return None
-
-
-def test_cols():
-    ## default income categories
-    inc_cats_def = ['q1_1', 'q1_2', 'q1_3', 'q2', 'q3', 'q4', 'q5']
-    inc_cols_def = [['Less than $10,000'],
-                    ['$10,000 to $14,999', '$15,000 to $19,999', '$20,000 to $24,999'],
-                    ['$25,000 to $29,999', '$30,000 to $34,999', '$35,000 to $39,999'],
-                    ['$40,000 to $44,999', '$45,000 to $49,999', '$50,000 to $59,999', '$60,000 to $74,999'],
-                    ['$75,000 to $99,999', '$100,000 to $124,999'],
-                    ['$125,000 to $149,999', '$150,000 to $199,999'],
-                    ['$200,000 or more']]
-
-    ## parameters from json files
-    d = tryJSON("config.json")
-
-    ## read states/counties to include
-    geos = d.get("geos", d.get("geos",None))
-
-    ## read ADJINC
-    ADJINC = d.get("inc_adj",1.010145)
-    ## read income categories
-    inc_cats = d.get("inc_cats",inc_cats_def)
-    inc_cols = d.get("inc_cols",inc_cols_def)
-    LODES_cutoff = d.get("LODES_annual_income_boundary",40000)
-    adults_hh_cbg = read_acs('B09021',geos)[['B09021:']]
-    cbg_index = adults_hh_cbg.index
-    geo_xwalk = read_geo_xwalk(cbg_index)
-
-    generate_test_targets(geos,geo_xwalk)
-    gen_samp_test_cols(ADJINC, inc_cats, inc_cols, LODES_cutoff)
-
-
-
-
-
-
-
-
-
-
-if __name__ == "__main__":
-    main()
-

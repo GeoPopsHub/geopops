@@ -1,8 +1,7 @@
 {
     "path": "data",
-    "census_api_key": null,
-    "random_seed": null,
     "main_year": 2019,
+    "decennial_year": 2010,
     "geos": [
         "45083"
     ],
@@ -14,25 +13,24 @@
         "45",
         "37"
     ],
-    "decennial_year": 2010,
     "acs_required": [
         "B01001",
+        "B09018",
         "B09019",
         "B09020",
-        "C24030",
-        "B23025",
-        "C24010",
-        "B11016",
-        "B11012",
-        "B23009",
+        "B09021",
         "B11004",
+        "B11012",
+        "B11016",
         "B19001",
         "B22010",
-        "B09021",
-        "B09018",
+        "B23009",
+        "B23025",
+        "B25006",
         "B11001H",
         "B11001I",
-        "B25006"
+        "C24010",
+        "C24030"
     ],
     "dec_required": [
         "P43",
@@ -84,13 +82,8 @@
         "sch_public",
         "sch_private",
         "female",
-        "race_white_alone",
         "race_black_alone",
-        "race_amerindian_or_alaskan",
-        "race_asian_alone",
-        "race_pacific_alone",
-        "race_other_alone",
-        "race_two_or_more",
+        "white_non_hispanic",
         "hispanic"
     ],
     "LODES_annual_income_boundary": 40000,
@@ -109,5 +102,7 @@
     "school_K": 12,
     "gq_K": 12,
     "netw_K": 8,
-    "netw_B": 0.25
+    "netw_B": 0.25,
+    "census_api_key": "ca5103b853992f7a73bcc3d82b96322486efafeb",
+    "julia_env_path": "/home/cliffk/.julia/environments/v1.9/"
 }

@@ -5,8 +5,8 @@ Translated from julia/households.jl.
 import numpy as np
 import pandas as pd
 import os
-from .utils import (PersonData, Household, GQres, Indexer, tryJSON,
-                    thresh, ranges, first_true, lrRound)
+from .utils import (PersonData, Household, GQres, Indexer, TraitSchema,
+                    tryJSON, thresh, ranges)
 
 
 def read_counties(data_dir):
@@ -18,7 +18,7 @@ def read_counties(data_dir):
 def read_hh_serials(data_dir):
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'hh_samples.csv'),
                      usecols=['SERIALNO'], dtype={'SERIALNO': str})
-    return dict(zip(df['SERIALNO'], range(1, len(df) + 1)))
+    return dict(zip(df['SERIALNO'], range(1, len(df) + 1), strict=False))
 
 
 def read_psamp_df(data_dir, ind_codes, additional_traits):
@@ -46,9 +46,13 @@ def _row_gq_employment(n, jobtype, ind_codes, row):
     return [int(round(row.get(prefix + k, 0))) for k in ind_codes]
 
 
-def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng):
+def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng, schema=None):
     min_gq_residents = config.get('min_gq_residents', 20)
-    add_trait_cols = config.get('additional_traits', [])
+    if schema is None:
+        schema = TraitSchema(config.get('additional_traits', []))
+    # Group-quarters residents come from ACS aggregates rather than PUMS person
+    # records, so none of the PUMS-derived traits are known for them.
+    gq_trait_values = (None,) * len(schema)
 
     gq_cols = ['Geo', 'group quarters:', 'group quarters:under 18', 'group quarters:18 to 64',
                'group quarters:65 and over', 'p_u18_inst', 'p_18_64_inst', 'p_65o_inst',
@@ -123,7 +127,7 @@ def generate_group_quarters(config, cbgs, cbg_indexer, ind_codes, data_dir, rng)
                         working=has_job, commuter=is_commuter,
                         com_cat=emp_cat_final, com_inc=inc_cat,
                         sch_grade=None,
-                        **{trait: None for trait in add_trait_cols}
+                        schema=schema, trait_values=gq_trait_values,
                     )
 
     summary_rows = []
@@ -158,6 +162,51 @@ def _resolve_config(config, data_dir):
     return tryJSON(os.path.join(data_dir, 'config.json'))
 
 
+def _person_columns(p_samps, ind_codes, additional_traits):
+    """Precompute the per-person columns needed to build PersonData, as arrays.
+
+    Everything here used to be done row-by-row with ``.iloc``/``.apply(axis=1)``
+    inside the person loop, which costs a fresh pandas Series per person. Doing it
+    once, column-wise, is several hundred times faster.
+    """
+    ind_cols = ['ind_' + k for k in ind_codes]
+    ind = p_samps[ind_cols].to_numpy(dtype=bool) if ind_cols else np.zeros((len(p_samps), 0), bool)
+    has_ind = ind.any(axis=1) if ind.shape[1] else np.zeros(len(p_samps), bool)
+    # first_true(row) == argmax for a boolean row, but only where some value is True
+    first_ind = ind.argmax(axis=1) if ind.shape[1] else np.zeros(len(p_samps), int)
+
+    commuter = p_samps['commuter'].fillna(False).to_numpy(dtype=bool)
+    com_cat = np.where(commuter & has_ind, first_ind + 1, -1)
+
+    income = p_samps[['com_LODES_low', 'com_LODES_high']].to_numpy(dtype=bool)
+    has_income = income.any(axis=1)
+    com_inc = np.where(has_income, income.argmax(axis=1) + 1, -1)
+
+    sch_grade = p_samps['sch_grade'].to_numpy(dtype=object)
+    sch_grade = np.where(pd.isna(sch_grade), None, sch_grade)
+
+    # Traits become a tuple per person, positioned by a schema shared population-wide
+    schema = TraitSchema(additional_traits)
+    if additional_traits:
+        raw = p_samps[list(additional_traits)].to_numpy(dtype=object)
+        trait_vals = np.where(pd.isna(raw), None, raw.astype(bool, copy=False)
+                              if raw.dtype != object else raw)
+        trait_rows = [tuple(None if v is None else bool(v) for v in row) for row in trait_vals]
+    else:
+        trait_rows = [()] * len(p_samps)
+
+    return dict(
+        age=p_samps['AGEP'].to_numpy(dtype=np.int64),
+        working=p_samps['has_job'].fillna(False).to_numpy(dtype=bool),
+        commuter=commuter,
+        com_cat=com_cat,
+        com_inc=com_inc,
+        sch_grade=sch_grade,
+        schema=schema,
+        trait_rows=trait_rows,
+    )
+
+
 def generate_people(co_results, data_dir, config=None, random_seed=None):
     rng = np.random.default_rng(random_seed)
     config = _resolve_config(config, data_dir)
@@ -170,17 +219,10 @@ def generate_people(co_results, data_dir, config=None, random_seed=None):
 
     p_samps = read_psamp_df(data_dir, ind_codes, additional_traits)
     p_idx = people_by_serial(p_samps)
-
-    ind_colnames = ['ind_' + k for k in ind_codes]
-    p_samps['ind_code'] = p_samps[ind_colnames].apply(
-        lambda row: first_true(row.values), axis=1)
-    p_samps['com_cat'] = p_samps.apply(
-        lambda row: (row['ind_code'] + 1) if (row['commuter'] and row['ind_code'] is not None) else None, axis=1)
-
-    income_cols = ['com_LODES_low', 'com_LODES_high']
-    p_samps['income_code'] = p_samps[income_cols].apply(
-        lambda row: first_true(row.values), axis=1)
-    p_samps['com_inc'] = p_samps['income_code'].apply(lambda x: (x + 1) if x is not None else None)
+    cols = _person_columns(p_samps, ind_codes, additional_traits)
+    age, working, commuter = cols['age'], cols['working'], cols['commuter']
+    com_cat, com_inc, sch_grade = cols['com_cat'], cols['com_inc'], cols['sch_grade']
+    schema, trait_rows = cols['schema'], cols['trait_rows']
 
     cbgs = {}
     cbg_indexer = Indexer()
@@ -199,23 +241,19 @@ def generate_people(co_results, data_dir, config=None, random_seed=None):
                 hh_key = (hh_i, cbg_i)
                 p_vec = p_idx.get(hh_serial, [])
                 for p_i_0, r in enumerate(p_vec):
-                    p_i = p_i_0 + 1
-                    row = p_samps.iloc[r - 1]
-                    trait_kwargs = {}
-                    for trait in additional_traits:
-                        val = row.get(trait)
-                        trait_kwargs[trait] = bool(val) if pd.notna(val) else None
-                    sch_grade = row['sch_grade'] if pd.notna(row['sch_grade']) else None
-                    people[(p_i, hh_i, cbg_i)] = PersonData(
+                    j = r - 1  # p_idx is 1-based for Julia parity
+                    grade = sch_grade[j]
+                    people[(p_i_0 + 1, hh_i, cbg_i)] = PersonData(
                         hh=hh_key,
                         sample=r,
-                        age=int(row['AGEP']),
-                        working=bool(row['has_job']),
-                        commuter=bool(row['commuter']),
-                        com_cat=int(row['com_cat']) if row['com_cat'] is not None and pd.notna(row['com_cat']) else None,
-                        com_inc=int(row['com_inc']) if row['com_inc'] is not None and pd.notna(row['com_inc']) else None,
-                        sch_grade=str(sch_grade) if sch_grade is not None else None,
-                        **trait_kwargs,
+                        age=int(age[j]),
+                        working=bool(working[j]),
+                        commuter=bool(commuter[j]),
+                        com_cat=int(com_cat[j]) if com_cat[j] > 0 else None,
+                        com_inc=int(com_inc[j]) if com_inc[j] > 0 else None,
+                        sch_grade=str(grade) if grade is not None else None,
+                        schema=schema,
+                        trait_values=trait_rows[j],
                     )
                 households[hh_key] = Household(
                     sample=hh_idx.get(hh_serial, 0),
@@ -223,6 +261,6 @@ def generate_people(co_results, data_dir, config=None, random_seed=None):
                 )
 
     cbgs, gqs, gq_people, gq_summary = generate_group_quarters(
-        config, cbgs, cbg_indexer, ind_codes, data_dir, rng)
+        config, cbgs, cbg_indexer, ind_codes, data_dir, rng, schema=schema)
     people.update(gq_people)
     return cbgs, people, households, gqs, gq_summary

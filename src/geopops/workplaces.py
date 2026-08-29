@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import os
 from scipy import sparse
-from .utils import tryJSON, lrRound, lrRound_matrix, rowRound, drawCounts, vecmerge
+from .utils import tryJSON, lrRound, rowRound, drawCounts, vecmerge
 from .ipfn import ipfn as IPFN
 
 
@@ -59,8 +59,10 @@ def group_commuters_by_origin(people, cbgs, ind_codes, rng):
             continue
         cat_code = ind_codes[int(cat_idx) - 1]
         cbg_code = cbgs_inv.get(cbg_idx, '')
-        workers = [(int(r['id']), int(r['hh']), int(r['cbg']), r['income'])
-                   for _, r in group.iterrows()]
+        workers = list(zip(group['id'].astype(int).tolist(),
+                           group['hh'].astype(int).tolist(),
+                           group['cbg'].astype(int).tolist(),
+                           group['income'].tolist(), strict=False))
         rng.shuffle(workers)
         worker_keys[cat_code][cbg_code] = workers
 
@@ -79,36 +81,40 @@ class DummyGenerator:
 
 
 def read_workers_by_cat(co_results, data_dir, ind_codes, counties):
-    """Read # workers by industry category from HH sample summaries."""
+    """Number of workers per industry category, per origin CBG.
+
+    Sums the per-industry worker counts of the PUMS households that CO assigned to
+    each CBG. Done column-wise over a NumPy view of the sample table: the previous
+    row-at-a-time ``.iloc[i][col]`` lookup built a fresh pandas Series per household
+    *per category*, which dominated the runtime of this stage.
+    """
     cat_cols = ['com_ind_' + k for k in ind_codes]
     hh_samps = pd.read_csv(os.path.join(data_dir, 'processed', 'hh_samples.csv'),
                             usecols=['SERIALNO'] + cat_cols, dtype={'SERIALNO': str})
-    # Keep HH sample row mapping 1-based for Julia parity.
-    hh_idx = dict(zip(hh_samps['SERIALNO'], range(1, len(hh_samps) + 1)))
+    counts = hh_samps[cat_cols].to_numpy(dtype=float)   # (n_samples, n_categories)
+    row_of = {serial: i for i, serial in enumerate(hh_samps['SERIALNO'])}
 
     workers_by_cat = {k: {} for k in ind_codes}
     for co in counties:
         if co not in co_results:
             continue
-        cbg_dict = co_results[co]
-        for ori, hhvec in cbg_dict.items():
-            for cat_code, cat_col in zip(ind_codes, cat_cols):
-                total = sum(
-                    hh_samps.iloc[hh_idx[x] - 1][cat_col]
-                    for x in hhvec
-                    if x in hh_idx and pd.notna(hh_samps.iloc[hh_idx[x] - 1][cat_col])
-                )
+        for ori, hhvec in co_results[co].items():
+            rows = [row_of[x] for x in hhvec if x in row_of]
+            totals = np.nansum(counts[rows], axis=0) if rows else np.zeros(len(ind_codes))
+            for cat_code, total in zip(ind_codes, totals, strict=False):
                 workers_by_cat[cat_code][ori] = int(total)
     return workers_by_cat
 
 
 def read_gq_workers_by_cat(gq_summary, ind_codes):
     """Get # workers in GQs by industry from the GQ summary dataframe."""
-    cat_cols = ['ind_' + k for k in ind_codes]
-    gq_by_cat = {k: {} for k in ind_codes}
-    for _, r in gq_summary.iterrows():
-        for cat_code, cat_col in zip(ind_codes, cat_cols):
-            gq_by_cat[cat_code][r['geo']] = int(r.get(cat_col, 0))
+    geos = gq_summary['geo'].tolist()
+    gq_by_cat = {}
+    for cat_code in ind_codes:
+        col = 'ind_' + cat_code
+        vals = (gq_summary[col].to_numpy(dtype=float) if col in gq_summary.columns
+                else np.zeros(len(geos)))
+        gq_by_cat[cat_code] = dict(zip(geos, vals.astype(np.int64).tolist(), strict=False))
     return gq_by_cat
 
 
@@ -126,19 +132,29 @@ def read_od_matrix(data_dir, k, m, n):
 def read_outside_origins(data_dir, ind_codes):
     """Counts of workers commuting from outside the synth area."""
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'work_cats_live_outside.csv'))
-    tmp = dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
+    tmp = dict(zip(df.iloc[:, 0], df.iloc[:, 1], strict=False))
     return {k: int(round(tmp.get('C24030:' + k, 0))) for k in ind_codes}
 
 
-def calc_od_counts(ind_codes, counties, co_results, gq_summary, data_dir):
+def calc_od_counts(ind_codes, counties, co_results, gq_summary, data_dir, commute=None):
     """Calculate origin-destination counts for each industry.
-    Returns (origin_labels, dest_labels, od_counts_by_cat).
-    od_counts_by_cat: dict[cat_code -> dense numpy array of OD counts]
+
+    Args:
+        commute: optional ``(origin_labels, dest_labels, {cat: csr_matrix})`` as
+            returned by :func:`generate_commute_matrices`. When given, the OD
+            proportion matrices are taken from memory instead of being re-read from
+            the ``od_*.csv.gz`` files that were just written.
+
+    Returns:
+        tuple: ``(origin_labels, dest_labels, od_counts_by_cat)``, where
+        ``od_counts_by_cat`` maps each category to a dense OD count array.
     """
-    origin_df = pd.read_csv(os.path.join(data_dir, 'processed', 'od_rows_origins.csv'))
-    dest_df = pd.read_csv(os.path.join(data_dir, 'processed', 'od_columns_dests.csv'))
-    origin_labels = origin_df['origin'].astype(str).tolist()
-    dest_labels = dest_df['dest'].astype(str).tolist()
+    if commute is not None:
+        origin_labels, dest_labels, od_props = commute
+    else:
+        origin_labels = pd.read_csv(os.path.join(data_dir, 'processed', 'od_rows_origins.csv'))['origin'].astype(str).tolist()
+        dest_labels = pd.read_csv(os.path.join(data_dir, 'processed', 'od_columns_dests.csv'))['dest'].astype(str).tolist()
+        od_props = None
     n_rows = len(origin_labels)
     n_cols = len(dest_labels)
     origin_idx = {o: i for i, o in enumerate(origin_labels)}
@@ -152,7 +168,12 @@ def calc_od_counts(ind_codes, counties, co_results, gq_summary, data_dir):
 
     od_counts_by_cat = {}
     for k in ind_codes:
-        M = read_od_matrix(data_dir, k, n_rows, n_cols).toarray()
+        if od_props is not None:
+            # float32 -> float64 reproduces exactly what reading the CSV back gives,
+            # since the CSV stores the float32 values.
+            M = od_props[k].astype(np.float64).toarray()
+        else:
+            M = read_od_matrix(data_dir, k, n_rows, n_cols).toarray()
         counts = np.zeros((n_rows, n_cols), dtype=np.int64)
         for code, rownum in origin_idx.items():
             hh_n = hhw[k].get(code, 0) + gqw[k].get(code, 0)
@@ -166,7 +187,7 @@ def read_county_stats(data_dir):
     """Employer size stats (lognormal mu, sigma) by county."""
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'work_sizes.csv'),
                      usecols=['county', 'mu_ln', 'sigma_ln'], dtype={'county': str})
-    return {r['county']: (r['mu_ln'], r['sigma_ln']) for _, r in df.iterrows()}
+    return dict(zip(df['county'], zip(df['mu_ln'], df['sigma_ln'], strict=False), strict=False))
 
 
 def read_school_info(data_dir):
@@ -181,7 +202,7 @@ def read_school_info(data_dir):
 
     schools = pd.read_csv(os.path.join(data_dir, 'processed', 'schools.csv'),
                           usecols=['NCESSCH', 'TEACHERS'], dtype={'NCESSCH': str})
-    sch_n_teachers = dict(zip(schools['NCESSCH'], schools['TEACHERS'].astype(int)))
+    sch_n_teachers = dict(zip(schools['NCESSCH'], schools['TEACHERS'].astype(int), strict=False))
     return sch_n_teachers, closest_cbg
 
 
@@ -209,13 +230,21 @@ def filter_dests(geo, dest_idx, colsums):
 
 def pull_inst_workers(count_matrix, dest_idx, origin_labels, workers_by_key, loc_by_key, rng):
     """Pull worker origins for institutions (schools/GQs) from the OD count matrix.
-    Modifies count_matrix in place. Returns dict[inst_key -> list[origin_codes]].
+
+    Modifies `count_matrix` in place. Returns dict[inst_key -> list[origin_codes]].
+
+    Institutions look for available workers in progressively wider rings around
+    their own CBG: exact CBG, then tract, then successively shorter geo prefixes,
+    then the county.
     """
+    # Column sums are maintained incrementally: recomputing the full reduction per
+    # institution was O(rows x cols) each time, for thousands of institutions.
+    colsums = count_matrix.sum(axis=0)
+
     inst_emp_origins = {}
     for inst_id, n_needed in workers_by_key.items():
         cbg = loc_by_key[inst_id]
         geo_areas = [cbg, cbg[:11], cbg[:9], cbg[:7], cbg[:5]]
-        colsums = count_matrix.sum(axis=0)
         dest_lists = [filter_dests(geo, dest_idx, colsums) for geo in geo_areas]
         for dl in dest_lists:
             rng.shuffle(dl)
@@ -234,6 +263,7 @@ def pull_inst_workers(count_matrix, dest_idx, origin_labels, workers_by_key, loc
             col_view = count_matrix[:, col].copy()
             drawn = drawCounts(col_view, draw_n, rng)
             count_matrix[:, col] = col_view
+            colsums[col] -= len(drawn)
             o_idxs.extend(drawn)
             remaining -= draw_n
             if remaining < 1:
@@ -258,14 +288,17 @@ def generate_workplaces(count_matrix, dest_idx, origin_labels, county_stats, dra
         sigma = sigma + 0.1  # slight adjustment per Julia code
         dests = {code: idx for code, idx in dest_idx.items() if code[:5] == co}
         for dest_code, col in dests.items():
-            n = int(count_matrix[:, col].sum())
-            if n > 0:
-                sizes = split_lognormal(n, mu, sigma, draws, rng)
-                for work_i, emp_size in enumerate(sizes):
-                    col_view = count_matrix[:, col].copy()
-                    o_idxs = drawCounts(col_view, emp_size, rng)
-                    count_matrix[:, col] = col_view
-                    work_origins[(work_i + 1, cat_idx, dest_code)] = [origin_labels[i] for i in o_idxs]
+            # One column slice per destination rather than per workplace: the column
+            # is mutated in place across all its workplaces, then written back once.
+            col_view = count_matrix[:, col].copy()
+            n = int(col_view.sum())
+            if n <= 0:
+                continue
+            sizes = split_lognormal(n, mu, sigma, draws, rng)
+            for work_i, emp_size in enumerate(sizes):
+                o_idxs = drawCounts(col_view, emp_size, rng)
+                work_origins[(work_i + 1, cat_idx, dest_code)] = [origin_labels[i] for i in o_idxs]
+            count_matrix[:, col] = col_view
     return work_origins
 
 
@@ -316,9 +349,18 @@ def assign_workers(emp_origins, workers_by_origin, cidx_by_origin, dummy_fn, rng
     return workers, dummies, missing_origin, ran_out
 
 
-def generate_commute_matrices(data_dir):
-    """Generate per-industry OD proportion matrices using IPF.
-    Writes results to processed/od_*.csv.gz. Called before generate_jobs_and_workers.
+def generate_commute_matrices(data_dir, save=True, verbose=1):
+    """Generate per-industry origin-destination proportion matrices using IPF.
+
+    Args:
+        data_dir: run directory containing ``processed/``.
+        save: if True (default) also write ``processed/od_*.csv.gz`` and the
+            origin/destination label files. These are a useful checkpoint, but the
+            matrices are returned either way so the caller need not read them back.
+        verbose: if truthy, log the files written.
+
+    Returns:
+        tuple: ``(origin_labels, dest_labels, {cat_code: csr_matrix})``.
     """
     wp_codes = tryJSON(os.path.join(data_dir, 'processed', 'codes.json'))
     ind_codes = wp_codes.get('ind_codes', [])
@@ -343,7 +385,11 @@ def generate_commute_matrices(data_dir):
     n_ori = len(origin_idxs)
     n_dest = len(dest_idxs)
     n_ind = len(ind_codes)
-    res_iod = [sparse.lil_matrix((n_ori, n_dest), dtype=np.float32) for _ in ind_codes]
+    # Accumulate COO triplets per industry; building one matrix at the end is much
+    # faster than incremental assignment into a lil_matrix.
+    res_rows = [[] for _ in ind_codes]
+    res_cols = [[] for _ in ind_codes]
+    res_vals = [[] for _ in ind_codes]
 
     for o in range(n_ori):
 
@@ -382,43 +428,67 @@ def generate_commute_matrices(data_dir):
                 new_m[zero_rows, :] = d_margin / d_margin.sum()
 
         for i in range(n_ind):
-            res_iod[i][o, d_idxs] = new_m[i, :]
+            vals = new_m[i, :]
+            nz = np.flatnonzero(vals)
+            if nz.size:
+                res_rows[i].append(np.full(nz.size, o, dtype=np.int32))
+                res_cols[i].append(np.asarray(d_idxs, dtype=np.int32)[nz])
+                res_vals[i].append(vals[nz].astype(np.float32))
 
-    # Write results
-    proc_dir = os.path.join(data_dir, 'processed')
-    pd.DataFrame({'idx': range(1, n_ori + 1), 'origin': origin_idxs}).to_csv(
-        os.path.join(proc_dir, 'od_rows_origins.csv'), index=False)
-    pd.DataFrame({'idx': range(1, n_dest + 1), 'dest': dest_idxs}).to_csv(
-        os.path.join(proc_dir, 'od_columns_dests.csv'), index=False)
-    for i, k in enumerate(ind_codes):
-        m = res_iod[i].tocsr()
-        rows, cols, vals = sparse.find(m)
-        df = pd.DataFrame({'origin': rows + 1, 'dest': cols + 1, 'p': vals.astype(np.float32)})
-        df.to_csv(os.path.join(proc_dir, f'od_{k}.csv.gz'), index=False, compression='gzip')
+    def build(i):
+        if not res_rows[i]:
+            return sparse.csr_matrix((n_ori, n_dest), dtype=np.float32)
+        return sparse.coo_matrix(
+            (np.concatenate(res_vals[i]),
+             (np.concatenate(res_rows[i]), np.concatenate(res_cols[i]))),
+            shape=(n_ori, n_dest), dtype=np.float32).tocsr()
+
+    od_props = {k: build(i) for i, k in enumerate(ind_codes)}
+
+    if save:
+        proc_dir = os.path.join(data_dir, 'processed')
+        pd.DataFrame({'idx': range(1, n_ori + 1), 'origin': origin_idxs}).to_csv(
+            os.path.join(proc_dir, 'od_rows_origins.csv'), index=False)
+        pd.DataFrame({'idx': range(1, n_dest + 1), 'dest': dest_idxs}).to_csv(
+            os.path.join(proc_dir, 'od_columns_dests.csv'), index=False)
+        if verbose:
+            print("-- processed/od_rows_origins.csv")
+            print("-- processed/od_columns_dests.csv")
+        for k in ind_codes:
+            rows, cols, vals = sparse.find(od_props[k])
+            pd.DataFrame({'origin': rows + 1, 'dest': cols + 1,
+                          'p': vals.astype(np.float32)}).to_csv(
+                os.path.join(proc_dir, f'od_{k}.csv.gz'), index=False, compression='gzip')
+            if verbose:
+                print(f"-- processed/od_{k}.csv.gz")
+
+    return origin_idxs, dest_idxs, od_props
 
 
-def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_dir, random_seed=None):
+def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_dir,
+                              random_seed=None, config=None, save_intermediates=True,
+                              verbose=1):
     """Generate workplaces and assign workers.
     Returns (company_workers, sch_workers, gq_workers, outside_workers, dummies).
     Each *_workers is dict[key -> list[worker_tuple]].
     """
     rng = np.random.default_rng(random_seed)
-    config = tryJSON(os.path.join(data_dir, 'config.json'))
+    if config is None:
+        config = tryJSON(os.path.join(data_dir, 'config.json'))
     wp_codes = tryJSON(os.path.join(data_dir, 'processed', 'codes.json'))
     ind_codes = wp_codes.get('ind_codes', [])
     ind_idxs = {k: i + 1 for i, k in enumerate(ind_codes)}
-    cbgs_inv = {v: k for k, v in cbgs.items()}
-    counties = sorted(set(v[:5] for v in cbgs.keys()))
+    counties = sorted({v[:5] for v in cbgs})
 
     worker_keys = group_commuters_by_origin(people, cbgs, ind_codes, rng)
     dummy_fn = DummyGenerator()
 
-    # Generate commute matrices
-    generate_commute_matrices(data_dir)
+    # Generate commute matrices, then use them directly rather than writing them to
+    # gzipped CSV and immediately reading them back.
+    commute = generate_commute_matrices(data_dir, save=save_intermediates, verbose=verbose)
 
     origin_labels, dest_labels, od_counts_by_cat = calc_od_counts(
-        ind_codes, counties, co_results, gq_summary, data_dir)
-    dest_idx = {d: i for i, d in enumerate(dest_labels)}
+        ind_codes, counties, co_results, gq_summary, data_dir, commute=commute)
 
     county_stats = read_county_stats(data_dir)
     draws_by_county = {co: [] for co in counties}
@@ -441,7 +511,7 @@ def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_di
         work_outside_counts = od_counts[:, -1].copy()
         od_counts = od_counts[:, :-1]
         dest_idx_local = {d: i for i, d in enumerate(dest_labels[:-1])}
-        work_outside = dict(zip(origin_labels, work_outside_counts))
+        work_outside = dict(zip(origin_labels, work_outside_counts, strict=False))
 
         # Schools
         if ckey == 'EDU':

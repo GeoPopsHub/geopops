@@ -15,6 +15,13 @@ def _log_export(verbose, msg=""):
         print(msg)
 
 
+def _trait_names(people):
+    """The config-driven trait names carried by this population, in column order."""
+    for person in people.values():
+        return list(person.schema.names)
+    return []
+
+
 def _mcon(val):
     if val is None:
         return ""
@@ -46,22 +53,19 @@ def export_synthpop(data_dir, cbgs, households, people, sch_students, sch_worker
         os.path.join(export_dir, 'hh.csv'), index=False)
     _log_export(verbose, f"-- {rel}/hh.csv")
 
+    # Trait columns are config-driven, so read them off the population's schema
+    # rather than hardcoding a list that silently drifts out of sync.
+    trait_names = _trait_names(people)
     p_rows = sorted([
         (int(k[0]), int(k[1]), int(k[2]), _mcon(v.sample), _mcon(v.age),
-         _mcon(v.female), _mcon(v.working), _mcon(v.commuter),
-         _mcon(v.com_inc), _mcon(v.com_cat),
-         _mcon(v.race_white_alone), _mcon(v.race_black_alone), _mcon(v.race_amerindian_or_alaskan),
-         _mcon(v.race_asian_alone), _mcon(v.race_pacific_alone), _mcon(v.race_other_alone),
-         _mcon(v.race_two_or_more), _mcon(v.hispanic),
-         _mcon(v.sch_grade))
+         _mcon(v.working), _mcon(v.commuter), _mcon(v.com_inc), _mcon(v.com_cat),
+         *(_mcon(t) for t in v.trait_values), _mcon(v.sch_grade))
         for k, v in people.items()
     ], key=lambda x: (x[2], x[1], x[0]))
     pd.DataFrame(p_rows, columns=[
-        'p_id', 'hh_id', 'cbg_id', 'sample_index', 'age', 'female', 'working', 'commuter',
+        'p_id', 'hh_id', 'cbg_id', 'sample_index', 'age', 'working', 'commuter',
         'commuter_income_category', 'commuter_workplace_category',
-        'race_white_alone', 'race_black_alone', 'race_amerindian_or_alaskan',
-        'race_asian_alone', 'race_pacific_alone', 'race_other_alone',
-        'race_two_or_more', 'hispanic', 'sch_grade'
+        *trait_names, 'sch_grade'
     ]).to_csv(os.path.join(export_dir, 'people.csv'), index=False)
     _log_export(verbose, f"-- {rel}/people.csv")
 
