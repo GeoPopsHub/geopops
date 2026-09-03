@@ -1,0 +1,19 @@
+{
+  "_co_maxgens": 5000,
+  "_seed": 42,
+  "adj_mat_keys.csv": "ea5d1a9b40e89395",
+  "adj_upper_triang_gq.mtx": "6c758ef254b0531b",
+  "adj_upper_triang_hh.mtx": "7c834fbb5d99c77a",
+  "adj_upper_triang_sch.mtx": "30581ee30ac5fe55",
+  "adj_upper_triang_wp.mtx": "0358f188b0d57064",
+  "cbg_idxs.csv": "90fec38dffb34d70",
+  "company_workers.csv": "87d1ca31ab56460f",
+  "gq_residents.csv": "8159fbd586b27042",
+  "gq_workers.csv": "db47f7fdb0e52c9a",
+  "gqs.csv": "a5f0cfa675e46e1a",
+  "hh.csv": "74912439a5593177",
+  "outside_workers.csv": "30d9f6cb37abd2be",
+  "people.csv": "e207f4e638eaf912",
+  "sch_students.csv": "e072acc81ecbc4d6",
+  "sch_workers.csv": "e04e3fd869ab2113"
+}

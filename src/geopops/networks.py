@@ -5,7 +5,7 @@ Translated from julia/netw.jl.
 import numpy as np
 import networkx as nx
 from scipy import sparse
-from .utils import tryJSON, lrRound, vecmerge
+from .utils import lrRound, vecmerge
 
 
 def connect_SBM(keyvec, K, min_N, assoc_coeff, use_groups=True, rng=None):
@@ -136,7 +136,7 @@ def _assign_teachers_to_grades(school_key, students_by_grade, sch_workers_for_sc
     proportions = np.array([grade_counts[g] / total for g in grade_list])
     n_per_grade = lrRound(proportions * n_teachers)
     teacher_grades = []
-    for g, n in zip(grade_list, n_per_grade):
+    for g, n in zip(grade_list, n_per_grade, strict=False):
         teacher_grades.extend([g] * n)
     return [(t[0], t[1], t[2], teacher_grades[i] if i < len(teacher_grades) else '0')
             for i, t in enumerate(teachers)]
@@ -234,7 +234,7 @@ def generate_networks(people, households, gqs, sch_students, company_workers,
 
     # Outside workers: people with workplace outside synth area
     adj_out_workers = {}
-    for wkey, wlist in outside_workers.items():
+    for wlist in outside_workers.values():
         for w in wlist:
             pk = w[:3]
             if pk in all_idxs:
@@ -242,94 +242,3 @@ def generate_networks(people, households, gqs, sch_students, company_workers,
 
     return (adj_hh, adj_non_hh, adj_wp, adj_sch, adj_gq,
             adj_mat_keys, adj_dummy_keys, adj_out_workers)
-
-
-def generate_location_matrices(company_workers, households, cbgs, gqs, adj_mat_keys, p_idxs):
-    """Generate location contact matrices for ephemeral contacts.
-    Returns (w_loc_mat, res_loc_mat, loc_idxs, w_loc_lookup, res_loc_lookup).
-    """
-    cbgs_inv = {v: k for k, v in cbgs.items()}
-    ni_types = {'milGQ', 'ninst1864civ'}
-    n_people = len(adj_mat_keys)
-
-    # Index all people
-    p_idx_map = {k: i for i, k in enumerate(adj_mat_keys)}
-
-    # Group by census tract (CBG code minus last character)
-    hh_tracts = set()
-    for hk, hh in households.items():
-        cbg_code = cbgs_inv.get(hk[1], '')
-        if cbg_code:
-            hh_tracts.add(cbg_code[:-1])
-
-    work_tracts = set()
-    for wk in company_workers.keys():
-        if len(wk) >= 3 and isinstance(wk[2], str) and wk[2] != 'outside':
-            work_tracts.add(wk[2][:-1])
-
-    tracts = sorted(hh_tracts | work_tracts)
-    loc_idxs = {t: i for i, t in enumerate(tracts)}
-    n_tracts = len(tracts)
-
-    # Workers by tract
-    w_rows, w_cols = [], []
-    for wk, wlist in company_workers.items():
-        if len(wk) < 3 or not isinstance(wk[2], str) or wk[2] == 'outside':
-            continue
-        tract = wk[2][:-1]
-        if tract not in loc_idxs:
-            continue
-        loc_i = loc_idxs[tract]
-        for w in wlist:
-            pk = w[:3]
-            if pk in p_idx_map:
-                w_rows.append(p_idx_map[pk])
-                w_cols.append(loc_i)
-
-    w_loc_mat = sparse.csr_matrix(
-        (np.ones(len(w_rows), dtype=bool), (w_rows, w_cols)),
-        shape=(n_people, n_tracts)) if w_rows else sparse.csr_matrix((n_people, n_tracts), dtype=bool)
-
-    # Residents (HH + non-inst GQ) by tract
-    r_rows, r_cols = [], []
-    for hk, hh in households.items():
-        cbg_code = cbgs_inv.get(hk[1], '')
-        if not cbg_code:
-            continue
-        tract = cbg_code[:-1]
-        if tract not in loc_idxs:
-            continue
-        loc_i = loc_idxs[tract]
-        for pk in hh.people:
-            if pk in p_idx_map:
-                r_rows.append(p_idx_map[pk])
-                r_cols.append(loc_i)
-
-    for gk, gq in gqs.items():
-        if gq.type not in ni_types:
-            continue
-        cbg_code = cbgs_inv.get(gk[1], '')
-        if not cbg_code:
-            continue
-        tract = cbg_code[:-1]
-        if tract not in loc_idxs:
-            continue
-        loc_i = loc_idxs[tract]
-        for pk in gq.residents:
-            if pk in p_idx_map:
-                r_rows.append(p_idx_map[pk])
-                r_cols.append(loc_i)
-
-    res_loc_mat = sparse.csr_matrix(
-        (np.ones(len(r_rows), dtype=bool), (r_rows, r_cols)),
-        shape=(n_people, n_tracts)) if r_rows else sparse.csr_matrix((n_people, n_tracts), dtype=bool)
-
-    # Per-person lookups
-    w_loc_lookup = {}
-    for r, c in zip(w_rows, w_cols):
-        w_loc_lookup[r] = c
-    res_loc_lookup = {}
-    for r, c in zip(r_rows, r_cols):
-        res_loc_lookup[r] = c
-
-    return w_loc_mat, res_loc_mat, loc_idxs, w_loc_lookup, res_loc_lookup

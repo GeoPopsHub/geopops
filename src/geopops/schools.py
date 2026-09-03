@@ -11,10 +11,14 @@ from .utils import tryJSON
 def read_sch_cap(data_dir):
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'schools.csv'),
                      usecols=['NCESSCH', 'STUDENTS'], dtype={'NCESSCH': str})
-    return dict(zip(df['NCESSCH'], df['STUDENTS']))
+    return dict(zip(df['NCESSCH'], df['STUDENTS'], strict=False))
 
 
 def find_closest(data_dir, n):
+    """For each CBG and grade, the `n` nearest schools offering that grade.
+
+    Returns ``{grade_key: {cbg_geoid: [school_id, ...]}}``, nearest first.
+    """
     schools = pd.read_csv(os.path.join(data_dir, 'processed', 'schools.csv'),
                           dtype={'NCESSCH': str})
     distmat = pd.read_csv(os.path.join(data_dir, 'processed', 'cbg_sch_distmat.csv'),
@@ -25,25 +29,37 @@ def find_closest(data_dir, n):
     grade_keys = ['p', 'k'] + [str(i) for i in range(1, 13)]
     grade_labels = ['PK', 'KG'] + [str(i) for i in range(1, 13)]
     sch_ids = [c for c in distmat.columns if c != 'GEOID']
+    geoids = distmat['GEOID'].to_numpy()
 
     closest = {}
-    for gk, gl in zip(grade_keys, grade_labels):
+    for gk, gl in zip(grade_keys, grade_labels, strict=False):
         col = f'G_{gl}_OFFERED'
         if col not in schools.columns:
             continue
-        mask = schools[col].values.astype(bool)
-        valid_schs = schools['NCESSCH'].values[mask]
-        valid_set = set(valid_schs)
+        valid_set = set(schools['NCESSCH'].values[schools[col].values.astype(bool)])
         valid_cols = [s for s in sch_ids if s in valid_set]
+        if not valid_cols:
+            closest[gk] = {geo: [] for geo in geoids}
+            continue
 
-        sch_by_geo = {}
-        for _, row in distmat.iterrows():
-            geo = row['GEOID']
-            dists = [(s, row[s]) for s in valid_cols if pd.notna(row[s])]
-            dists.sort(key=lambda x: x[1])
-            top = dists[:n]
-            sch_by_geo[geo] = [s for s, _ in top]
-        closest[gk] = sch_by_geo
+        # Vectorized nearest-n. Missing distances become +inf so they sort last and
+        # can be filtered out afterwards; argpartition finds the n smallest per row
+        # without fully sorting, then only that slice is sorted.
+        dists = distmat[valid_cols].to_numpy(dtype=float)
+        dists = np.where(np.isnan(dists), np.inf, dists)
+        k = min(n, dists.shape[1] - 1) if dists.shape[1] > 1 else 0
+        if k > 0:
+            part = np.argpartition(dists, k, axis=1)[:, :n]
+        else:
+            part = np.argsort(dists, axis=1)[:, :n]
+        rows = np.arange(dists.shape[0])[:, None]
+        order = part[rows, np.argsort(dists[rows, part], axis=1)]
+
+        col_names = np.array(valid_cols, dtype=object)
+        closest[gk] = {
+            geo: col_names[row_order[np.isfinite(dists[i, row_order])]].tolist()
+            for i, (geo, row_order) in enumerate(zip(geoids, order, strict=False))
+        }
     return closest
 
 
@@ -57,9 +73,10 @@ def _get_students_in_school(people, cbgs_inv):
     return result
 
 
-def generate_schools(people, cbgs, data_dir, random_seed=None):
+def generate_schools(people, cbgs, data_dir, random_seed=None, config=None):
     rng = np.random.default_rng(random_seed)
-    config = tryJSON(os.path.join(data_dir, 'config.json'))
+    if config is None:
+        config = tryJSON(os.path.join(data_dir, 'config.json'))
     n_schools = config.get('n_closest_schools', 4)
     prob_closest = config.get('p_closest_school', 0.9)
 

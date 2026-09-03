@@ -19,8 +19,54 @@ There are many packages for generating agents and households from Census data, b
 ## Get involved
 GeoPops is in development and we welcome feedback! Get in touch if you've tried making a population of your own or want to become a member. You can upload your own example as a respository in the [GeoPopsHub](https://github.com/GeoPopsHub).
 
+## Installation
+
+```bash
+pip install geopops
+```
+
 ## How to use
-[`1_run_geopops.ipynb`](https://github.com/GeoPopsHub/sc_spartanburg_measles/blob/main/1_run_geopops.ipynb) has instructions on how to build a GeoPops population. See the repo [sc_spartanburg_measles](https://github.com/GeoPopsHub/sc_spartanburg_measles) for a detailed example of how to build a population, simulate a disease, test out interventions, and track outcomes by subgroup. 
+
+```python
+import geopops as gp
+
+# 1. Describe the population you want
+cfg = gp.make_config(
+    path="data",                    # where downloads and results are written
+    geos=["45083"],                 # state or county FIPS (Spartanburg County, SC)
+    main_year=2019,
+    commute_states=["45", "37"],    # states whose commute data to download (SC, NC)
+    use_pums=["45", "37"],          # states whose PUMS samples to draw from
+    random_seed=42,                 # set this for reproducible runs
+)
+
+# 2. Fetch and prepare the input data (slow; both steps cache to `path`)
+gp.download_data(cfg)
+gp.process_data(cfg)
+
+# 3. Generate the population
+pop = gp.generate_pop(cfg, seed=42)
+
+# 4. Hand it to Starsim
+ppl = gp.to_starsim_people(pop.pop_export_dir)
+networks = gp.starsim_networks(pop.pop_export_dir)
+```
+
+Or run the whole thing at once:
+
+```python
+pop = gp.run(cfg, seed=42)
+```
+
+A `CENSUS_API_KEY` is required for the download step. Put it in a `.env` file (see [`.env.example`](.env.example)) or set it in the environment; it is read automatically and is never written into the package.
+
+Results land in `<path>/pop_export/`: `people.csv` and `hh.csv` describe the agents and their households, and the `adj_upper_triang_*.mtx` files hold the household, school, workplace, and group-quarters contact networks.
+
+[`1_run_geopops.ipynb`](https://github.com/GeoPopsHub/sc_spartanburg_measles/blob/main/1_run_geopops.ipynb) walks through building a population. See [sc_spartanburg_measles](https://github.com/GeoPopsHub/sc_spartanburg_measles) for a full example that builds a population, simulates a disease, tests interventions, and tracks outcomes by subgroup.
+
+## License
+
+GeoPops is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE). It builds on [GREASYPOP-CO](https://github.com/CDDEP-DC/GREASYPOP-CO) (Copyright 2023 Alexander Tulchinsky), which is AGPL-3.0-or-later; see [NOTICE](NOTICE) for full attribution.
 
 ## Support
 GeoPops is a collaboration between the following institutions:

@@ -1,4 +1,15 @@
 #!/usr/bin/env python
+"""
+Iterative proportional fitting (IPF / IPFN).
+
+Vendored from the `ipfn` package: https://github.com/Dirguis/ipfn
+Copyright (c) Damien Forthomme and contributors. Licensed under the MIT License;
+the full license text is reproduced in the NOTICE file at the root of this
+repository.
+
+Kept close to upstream to ease future syncing. Prefer depending on the upstream
+`ipfn` package rather than maintaining this copy.
+"""
 from __future__ import print_function
 import numpy as np
 import pandas as pd

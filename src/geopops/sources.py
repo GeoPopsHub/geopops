@@ -6,16 +6,47 @@ import zipfile
 import gzip
 import shutil
 import time
-from pathlib import Path
 from curl_cffi import requests as curl_requests
 import urllib3
-import lzma
 import platform
 import subprocess
 import shlex
+import warnings
+from contextlib import contextmanager
 
-# Disable SSL warnings for downloads with verify=False
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from .exceptions import ConfigError, DataError, DownloadError
+
+# Some federal data portals (LODES, NCES, Census FTP) periodically serve
+# incomplete certificate chains. Falling back to an unverified request is
+# opt-in: set config["allow_insecure_downloads"] = True, or call
+# set_allow_insecure_downloads(True), and GeoPops will warn loudly when it
+# engages. It is off by default, and warnings are suppressed only for the
+# duration of the individual request rather than process-wide.
+_ALLOW_INSECURE_DOWNLOADS = False
+
+
+def set_allow_insecure_downloads(allow):
+    """Enable or disable the unverified-TLS fallback for data downloads.
+
+    Args:
+        allow (bool): If True, a request that fails TLS verification is retried
+            with verification disabled, after emitting a warning.
+    """
+    global _ALLOW_INSECURE_DOWNLOADS
+    _ALLOW_INSECURE_DOWNLOADS = bool(allow)
+
+
+@contextmanager
+def _insecure_request(src):
+    """Warn about, and locally silence warnings for, one unverified request."""
+    warnings.warn(
+        f"TLS verification disabled for {src}. The downloaded data is not "
+        "authenticated. Set allow_insecure_downloads=False to forbid this.",
+        stacklevel=3,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+        yield
 
 # Set base directory to the script's directory
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,12 +54,25 @@ OUTPUT_DIR = BASE_DIR  # Will be overridden at runtime from config["path"]
 
 # Removed here(): all write paths now use OUTPUT_DIR via os.path.join
 
+# Tables with no 2023/2024 vintage on the Census API; fall back to 2022 for these.
+ACS_MISSING_YEARS = {2023, 2024}
+ACS_FALLBACK_2022_CODES = {'B09019', 'B09020', 'B09021'}
+
+
+def _effective_acs_year(code, year_ACS):
+    """The ACS vintage actually available for `code`, falling back where needed."""
+    if year_ACS in ACS_MISSING_YEARS and code in ACS_FALLBACK_2022_CODES:
+        print(f"Using 2022 data for {code} because {year_ACS} data is not available via Census API")
+        return 2022
+    return year_ACS
+
+
 def dim_desc(df):
     """Function for returning dimensions of dataframe as a string
-    
+
     Args:
         df (pandas.DataFrame): The dataframe whose dimensions are to be described
-    
+
     Returns:
         str: A string describing the dimensions in the format "X rows x Y columns"
     """
@@ -36,11 +80,11 @@ def dim_desc(df):
 
 def fips_info(fips_codes, reverse=False):
     """Function for converting FIPS codes to state abbreviations or vice versa. Used for creating destination folders for census data
-    
+
     Args:
         fips_codes (str or list): FIPS code(s) or abbreviation(s) to convert. Can be a single string or a list
         reverse (bool, optional): If True, converts abbreviations to FIPS codes. If False, converts FIPS codes to abbreviations. Defaults to False.
-    
+
     Returns:
         dict: Dictionary with key "abbr" or "fips" containing the converted values. Returns None for invalid codes.
               If input is a list, returns a list of converted values; if input is a string, returns a single converted value.
@@ -56,11 +100,11 @@ def fips_info(fips_codes, reverse=False):
         "47": "TN", "48": "TX", "49": "UT", "50": "VT", "51": "VA", "53": "WA", "54": "WV",
         "55": "WI", "56": "WY", "72": "PR"
     }
-    
+
     if reverse:
         # Create reverse mapping from abbreviations to FIPS codes
         abbr_to_fips = {abbr: fips for fips, abbr in fips_to_abbr.items()}
-        
+
         if isinstance(fips_codes, list):
             result = {"fips": [abbr_to_fips.get(code, None) for code in fips_codes]}
             return result
@@ -73,186 +117,129 @@ def fips_info(fips_codes, reverse=False):
         else:
             return {"abbr": fips_to_abbr.get(fips_codes, None)}
 
-# Helper function to download files with retry logic
-def try_download(src, dst):
-    """Function for downloading a file with timeout and retry logic
-    
-    Args:
-        src (str): The source URL to download from
-        dst (str): The destination file path where the downloaded file will be saved
-    
-    Returns:
-        int: Status code (0 for success, -1 for failure)
-    """
-    timeout = 3600  # 1 hour timeout
-    retries = 3
-    status = 1
-    
-    while status != 0 and retries > 0:
-        try:
-            # First try with SSL verification enabled
-            response = requests.get(src, timeout=timeout, stream=True)
-            response.raise_for_status()
-            
-            with open(dst, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
+# ---------------------------------------------------------------------------
+# Downloading
+# ---------------------------------------------------------------------------
+
+# Browser-like headers: several federal data portals reject requests that do not
+# look like they came from a browser.
+_BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Cache-Control": "max-age=0",
+}
+
+_DOWNLOAD_TIMEOUT = 3600  # seconds
+_DOWNLOAD_RETRIES = 3
+
+
+def _is_tls_error(exc):
+    """True if the exception looks like a certificate/TLS failure."""
+    text = str(exc).lower()
+    return "ssl" in text or "certificate" in text
+
+
+def _fetch_requests(src, dst, headers, mode, verify):
+    """Stream a URL to disk with `requests`."""
+    response = requests.get(src, timeout=_DOWNLOAD_TIMEOUT, headers=headers,
+                            stream=True, verify=verify)
+    response.raise_for_status()
+    if mode == "text":
+        with open(dst, "w", encoding="utf-8") as f:
+            for chunk in response.iter_content(chunk_size=8192, decode_unicode=True):
+                if chunk:
                     f.write(chunk)
-            status = 0
-        except Exception as e:
-            # If SSL error, try again with SSL verification disabled
-            if "SSL" in str(e) or "certificate" in str(e).lower():
-                try:
-                    response = requests.get(src, timeout=timeout, stream=True, verify=False)
-                    response.raise_for_status()
-                    
-                    with open(dst, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    status = 0
-                except Exception as e2:
-                    print(f"Download attempt failed (with SSL disabled): {e2}")
-                    retries -= 1
-                    status = -1
-            else:
-                print(f"Download attempt failed: {e}")
-                retries -= 1
-                status = -1
-    
-    if status != 0:
-        print(f"Download failed: {src}")
-        exit(1)
-    
-    return status
+    else:
+        with open(dst, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
 
-def try_curl_cffi(src, dst):
-    """Function for downloading a file using curl_cffi with timeout and retry logic
-    
-    Args:
-        src (str): The source URL to download from
-        dst (str): The destination file path where the downloaded file will be saved
-    
-    Returns:
-        int: Status code (0 for success, -1 for failure)
-    """
-    timeout = 3600  # 1 hour timeout
-    retries = 3
-    status = 1
-    
-    while status != 0 and retries > 0:
-        try:
-            # Use browser impersonation with appropriate headers
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Cache-Control": "max-age=0"
-            }
-            
-            # Try with Chrome impersonation and SSL verification disabled for problematic sites
-            response = curl_requests.get(
-                src, 
-                timeout=timeout,
-                impersonate="chrome110",
-                headers=headers,
-                verify=False  # Disable SSL verification to handle certificate issues
-            )
-            
-            if response.status_code >= 400:
-                raise Exception(f"HTTP Error {response.status_code}")
-            
-            with open(dst, 'wb') as f:
-                f.write(response.content)
-            status = 0
-            
-        except Exception as e:
-            print(f"Download attempt failed: {e}")
-            retries -= 1
-            status = -1
-            time.sleep(2)  # Add a small delay between retries
-    
-    if status != 0:
-        print(f"Download failed: {src}")
-        exit(1)
-    
-    return status
 
-def try_download_text(src, dst):
-    """Function for downloading text content from web pages (like Census crosswalk files)
-    
+def _fetch_curl_cffi(src, dst, headers, mode, verify):
+    """Fetch a URL with `curl_cffi`, impersonating Chrome's TLS fingerprint."""
+    response = curl_requests.get(src, timeout=_DOWNLOAD_TIMEOUT, impersonate="chrome110",
+                                 headers=headers, verify=verify)
+    if response.status_code >= 400:
+        raise DownloadError(f"HTTP {response.status_code} for {src}")
+    if mode == "text":
+        with open(dst, "w", encoding="utf-8") as f:
+            f.write(response.text)
+    else:
+        with open(dst, "wb") as f:
+            f.write(response.content)
+
+
+BACKENDS = ("requests", "curl_cffi")
+
+
+def download(src, dst, *, backend="requests", mode="binary", headers=None,
+             retries=_DOWNLOAD_RETRIES):
+    """Download `src` to `dst`, with retries and an optional unverified-TLS fallback.
+
     Args:
-        src (str): The source URL to download from
-        dst (str): The destination file path where the downloaded text will be saved
-    
+        src (str): Source URL.
+        dst (str): Destination file path.
+        backend (str): ``"requests"`` (default) or ``"curl_cffi"``. The latter
+            impersonates a browser TLS fingerprint for portals that block
+            non-browser clients.
+        mode (str): ``"binary"`` (default) or ``"text"``.
+        headers (dict): Request headers. Defaults to browser-like headers.
+        retries (int): Number of attempts before giving up.
+
     Returns:
-        int: Status code (0 for success, -1 for failure)
+        int: 0 on success.
+
+    Raises:
+        DownloadError: If every attempt fails.
     """
-    timeout = 3600  # 1 hour timeout
-    retries = 3
-    status = 1
-    
-    while status != 0 and retries > 0:
+    # Resolved at call time (not via a module-level dict) so the backends stay
+    # patchable in tests and the error for a bad name is clear.
+    if backend == "requests":
+        fetch = _fetch_requests
+    elif backend == "curl_cffi":
+        fetch = _fetch_curl_cffi
+    else:
+        raise ValueError(f"Unknown download backend {backend!r}; expected one of {BACKENDS}.")
+    headers = _BROWSER_HEADERS if headers is None else headers
+    last_exc = None
+
+    for attempt in range(retries):
         try:
-            # Use browser-like headers to get the actual text content
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                "Accept": "text/plain,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Connection": "keep-alive",
-                "Cache-Control": "max-age=0"
-            }
-            
-            # First try with SSL verification enabled
-            response = requests.get(src, timeout=timeout, headers=headers, stream=True)
-            response.raise_for_status()
-            
-            # Write the content as text (not binary)
-            with open(dst, 'w', encoding='utf-8') as f:
-                for chunk in response.iter_content(chunk_size=8192, decode_unicode=True):
-                    if chunk:
-                        f.write(chunk)
-            status = 0
-            
+            fetch(src, dst, headers, mode, verify=True)
+            return 0
         except Exception as e:
-            # If SSL error, try again with SSL verification disabled
-            if "SSL" in str(e) or "certificate" in str(e).lower():
+            last_exc = e
+            if _is_tls_error(e) and _ALLOW_INSECURE_DOWNLOADS:
                 try:
-                    response = requests.get(src, timeout=timeout, headers=headers, stream=True, verify=False)
-                    response.raise_for_status()
-                    
-                    with open(dst, 'w', encoding='utf-8') as f:
-                        for chunk in response.iter_content(chunk_size=8192, decode_unicode=True):
-                            if chunk:
-                                f.write(chunk)
-                    status = 0
+                    with _insecure_request(src):
+                        fetch(src, dst, headers, mode, verify=False)
+                    return 0
                 except Exception as e2:
-                    print(f"Text download attempt failed (with SSL disabled): {e2}")
-                    retries -= 1
-                    status = -1
-            else:
-                print(f"Text download attempt failed: {e}")
-                retries -= 1
-                status = -1
-    
-    if status != 0:
-        print(f"Text download failed: {src}")
-        exit(1)
-    
-    return status
+                    last_exc = e2
+            print(f"Download attempt {attempt + 1}/{retries} failed for {src}: {last_exc}")
+            if attempt + 1 < retries:
+                time.sleep(2)
+
+    hint = ""
+    if _is_tls_error(last_exc) and not _ALLOW_INSECURE_DOWNLOADS:
+        hint = (" This looks like a TLS/certificate failure. If you trust this source, "
+                "set allow_insecure_downloads=True in your config to permit an "
+                "unverified retry.")
+    raise DownloadError(f"Download failed after {retries} attempts: {src}: {last_exc}.{hint}")
+
 
 def get_census_metadata(name, vintage, type_="variables"):
     """Function for getting ACS and Decennial metadata from Census API
-    
+
     Args:
         name (str): The census dataset name (e.g., "acs/acs5", "dec/dhc", "dec/sf1")
         vintage (str): The year of the census data (e.g., "2020", "2019"). Comes from the config.json file
         type_ (str, optional): The type of metadata to retrieve. Defaults to "variables". Can be "variables" or "geography"
-    
+
     Returns:
         pandas.DataFrame: DataFrame containing the metadata with variables as rows and metadata fields as columns
     """
@@ -263,7 +250,7 @@ def get_census_metadata(name, vintage, type_="variables"):
 
 def get_census_data(name, vintage, vars, region, regionin, key):
     """Function for making a Census API call and getting the data. Works with all ACS years and Decennial years before 2020
-    
+
     Args:
         name (str): The census dataset name (e.g., "acs/acs5", "dec/sf1")
         vintage (str): The year of the census data (e.g., "2020", "2019")
@@ -271,13 +258,13 @@ def get_census_data(name, vintage, vars, region, regionin, key):
         region (str): The geographic level to retrieve data for (e.g., "block group:*")
         regionin (str): The geographic filter for the region (e.g., "state:24 county:*")
         key (str): The Census API key for authentication
-    
+
     Returns:
         pandas.DataFrame: DataFrame containing the census data with variables as columns and geographic units as rows
     """
     # Build the API URL
     base_url = f"https://api.census.gov/data/{vintage}/{name}"
-    
+
     # Prepare parameters
     params = {
         "get": ",".join(vars),
@@ -285,11 +272,11 @@ def get_census_data(name, vintage, vars, region, regionin, key):
         "in": regionin,
         "key": key
     }
-    
+
     # Make the request
     response = requests.get(base_url, params=params)
     response.raise_for_status()
-    
+
     # Convert to DataFrame
     data = response.json()
     headers = data[0]
@@ -299,11 +286,11 @@ def get_census_data(name, vintage, vars, region, regionin, key):
 
 def get_new_dec_data(vintage, state_fips):
     """Function for getting 2020 Decennial data using the Census API
-    
+
     Args:
         vintage (str): The year of the decennial data (should be "2020")
         state_fips (str): The FIPS code for the state to retrieve data for
-    
+
     Returns:
         pandas.DataFrame: DataFrame containing the 2020 decennial data with variables as columns and geographic units as rows
     """
@@ -318,23 +305,16 @@ def get_new_dec_data(vintage, state_fips):
 
 def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_codes, key, verbose=1):
     """Function for pulling census data for given states
-    
+
     Args:
         state_fips (str): The FIPS code for the state to retrieve data for
         year_ACS (str): The year of the ACS data
         year_DEC (str): The year of the decennial data
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
-        
+
     Returns:
         Outputs data files in the census folder
     """
-
-    config_path = os.path.join(BASE_DIR, "config.json")
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"config.json file not found at {config_path}. Please create this file with the required configuration.")
-    
-    with open(config_path, "r") as f:
-        config = json.load(f)
 
     # Get metadata
     ACS_metadata = get_census_metadata(name="acs/acs5", vintage=year_ACS)
@@ -342,17 +322,11 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
         DEC_metadata = get_census_metadata(name="dec/dhc", vintage=year_DEC)
     else:
         DEC_metadata = get_census_metadata(name="dec/sf1", vintage=year_DEC)
-    
+
     # Save metadata to CSV files
     # ACS_metadata.to_csv('ACS_metadata.csv')
     # DEC_metadata.to_csv('DEC_metadata.csv')
-    
-    # Combine ACS and DEC metadata
-    metadata_required  = pd.concat([ACS_metadata, DEC_metadata], ignore_index=True)
-    
-    # Build name-label mapping dictionary (kept in-memory; no file output)
-    name_label_mapping = dict(zip(metadata_required["name"], metadata_required["label"]))
-    
+
     printed_acs_source = False
     printed_dec_source = False
     acs_source_url = f"https://api.census.gov/data/{year_ACS}/acs/acs5"
@@ -364,31 +338,23 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
         # Process ACS table codes
         # Note: no 2023 data for B09019/B09020/B09021
         # so we need to use 2022 data for these tables if year_ACS is 2023
-    
-        # Effective vintage: use 2022 for B09019/B09020/B09021 when year_ACS is 2023 (no 2023 data)
-        missing_years = {2023, 2024}
-        FALLBACK_2022_CODES = {'B09019', 'B09020', 'B09021'}
-        def _effective_acs_year(code, year_ACS):
-            if year_ACS in missing_years and code in FALLBACK_2022_CODES:
-                print(f"Using 2022 data for {code} because 2023 and 2024 data are not available via Census API")
-                return 2022
-            return year_ACS
+
         # Process ACS table codes
         table_codes = pd.DataFrame({
             "table_codes": [f"group({code})" for code in ACS_table_codes],
             "table_name": [f"ACSDT5Y{_effective_acs_year(code, year_ACS)}.{code}-Data" for code in ACS_table_codes],
             "vintage": [_effective_acs_year(code, year_ACS) for code in ACS_table_codes],
-        })   
-    
-       
+        })
+
+
         # table_codes = pd.DataFrame({
         #     "table_codes": [f"group({code})" for code in ACS_table_codes],
         #     "table_name": [f"ACSDT5Y{year_ACS}.{code}-Data" for code in ACS_table_codes]
         # })
-        
+
         for _, row in table_codes.iterrows():
             # print(f"Downloading {row['table_name']}")
-            
+
             # Make the API call and get the data
             data = get_census_data(
                 name="acs/acs5",
@@ -398,28 +364,28 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
                 regionin=f"state:{state_i} county:*",
                 key=key
             )
-            
+
             # Process data using Pandas
             data = data.drop(columns=["state", "county", "tract", "block group"], errors="ignore")
-            
+
             cols = data.columns.to_list()
             if "GEO_ID" in cols and "NAME" in cols: # Move GEO_ID and NAME to the beginning
                 cols.remove("GEO_ID")
                 cols.remove("NAME")
                 cols = ["GEO_ID", "NAME"] + cols
                 data = data[cols]
-            
+
             data = data.astype(str) # Convert all columns to string
             data_labels = ACS_metadata[ACS_metadata["name"].isin(data.columns)][["name", "label"]] # Get labels from metadata
-            
-            label_dict = dict(zip(data_labels["name"], data_labels["label"])) # Create a dictionary of column names to labels
+
+            label_dict = dict(zip(data_labels["name"], data_labels["label"], strict=False)) # Create a dictionary of column names to labels
             all_labels = {col: col for col in data.columns} # Ensure all columns have a label
             all_labels.update(label_dict)
             label_df = pd.DataFrame([all_labels]) # Create a DataFrame with labels as the first row
-            
+
             data_with_labels = pd.concat([label_df, data], ignore_index=True)  # Combine label row with data
             data_with_labels = data_with_labels.loc[:, ~data_with_labels.columns.str.endswith(('EA', 'M', 'MA'))] # Remove columns ending with EA, M, or MA
-            
+
             # Create destination folder and save to CSV
             state_abbr = fips_info(state_i)["abbr"]
             destination_folder = os.path.join(OUTPUT_DIR, "census", state_abbr.upper())
@@ -432,23 +398,23 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
                     print(f"-- Downloading from {acs_source_url}")
                     printed_acs_source = True
                 print(f"-- census/{state_abbr.upper()}/{file_name}")
-        
-        # Process DEC table codes        
+
+        # Process DEC table codes
         table_codes = pd.DataFrame({
             "table_codes": [f"group({code})" for code in DEC_table_codes],
             "table_name": [f"DECENNIALSF1{year_DEC}.{code}-Data" for code in DEC_table_codes]
         })
-        
+
         for _, row in table_codes.iterrows():
             # print(f"Downloading {row['table_name']}")
-            
+
             # Make the API call and get the data
             if year_DEC == 2020:
                 data = get_new_dec_data(year_DEC, state_i)
                 # Remove columns ending in 'A'
                 data = data.loc[:, ~data.columns.str.endswith('A')]
                 data.drop(columns=["ucgid"], inplace=True)
-            
+
             else:
                 data = get_census_data(
                     name="dec/sf1",
@@ -458,33 +424,33 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
                     regionin=f"state:{state_i} county:*",
                     key=key
                 )
-            
+
             # Process data using Pandas
             data = data.drop(columns=["state", "county", "tract", "block group"], errors="ignore")
-            cols = data.columns.to_list() 
+            cols = data.columns.to_list()
             if "GEO_ID" in cols and "NAME" in cols: # Move GEO_ID and NAME to the beginning of the dataframe
                 cols.remove("GEO_ID")
                 cols.remove("NAME")
                 cols = ["NAME","GEO_ID"] + cols
                 data = data[cols]
-        
+
             data = data.astype(str) # Convert all columns to string
             data_labels = DEC_metadata[DEC_metadata["name"].isin(data.columns)][["name", "label"]] # Get labels from metadata
-            
-            
-            label_dict = dict(zip(data_labels["name"], data_labels["label"])) # Create a dictionary of column names to labels
+
+
+            label_dict = dict(zip(data_labels["name"], data_labels["label"], strict=False)) # Create a dictionary of column names to labels
             all_labels = {col: col for col in data.columns} # Ensure all columns have a label
             all_labels.update(label_dict)
             label_df = pd.DataFrame([all_labels]) # Create a DataFrame with labels as the first row
-            
+
             data_with_labels = pd.concat([label_df, data], ignore_index=True) # Combine label row with data
-            
+
             if year_DEC == 2020: # 2020 Decennial data has a different format for the labels
                 data_with_labels.iloc[0, 2:] = data_with_labels.iloc[0, 2:].str.replace(':', '') # Strip ":" from the second row (labels) starting from fourth column
                 data_with_labels.iloc[0, 2:] = data_with_labels.iloc[0, 2:].str[3:] # Remove first two characters from each string in the second row starting from fourth column
-            
+
             data_with_labels = data_with_labels.loc[:, ~data_with_labels.columns.str.endswith('ERR')] # Remove columns ending with ERR
-            
+
             # Create destination folder and save to CSV
             state_abbr = fips_info(state_i)["abbr"]
             destination_folder = os.path.join(OUTPUT_DIR, "census", state_abbr.upper())
@@ -500,25 +466,25 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
 
 def pull_pums_data(states, year, verbose=1):
     """Function for pulling PUMS microdata for given states
-    
+
     Args:
         states (list): List of state abbreviations
         year (str): The year of the PUMS data
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
-        
+
     Returns:
         Outputs data files in the pums folder
-        
+
     Notes: 2024 and 2025 urls require password to access. If main year > 2023, use 2023 data.
     This means that the combinatorial optimization algorithm will combine households from 2023 PUMS data
     such that the set reasonably approximates Census distributions for target variables in the year specified in the config file.
     This can still produce a population that is reasonably representative of the target year.
     """
-    
+
     states = [s.lower() for s in states]
 
     file_urls = []
-    
+
     # Set the URL of the file to download
     for state in states:
         if year > 2023:
@@ -532,12 +498,12 @@ def pull_pums_data(states, year, verbose=1):
     if verbose:
         print("\n*** Running DownloadData.pull_pums_data() ***")
     for state_i in states:
-        
+
         urls_list = [url for state, url in file_urls if state == state_i]
-        
+
         for url in urls_list:
             download_url = url
-            
+
             # Specify the destination folder and file name
             destination_folder = os.path.join(OUTPUT_DIR, "pums")
             file_name = os.path.basename(download_url)
@@ -545,24 +511,24 @@ def pull_pums_data(states, year, verbose=1):
             # print(destination_folder)
             # Create the destination folder if it doesn't exist
             os.makedirs(destination_folder, exist_ok=True)
-            
+
             # Download the file
-            try_curl_cffi(download_url, destination_file)
-            
+            download(download_url, destination_file, backend="curl_cffi")
+
             # Extract the contents of the zip file
             with zipfile.ZipFile(destination_file, 'r') as zip_ref:
                 zip_ref.extractall(destination_folder)
-            
+
             # Remove the zip file
             os.remove(destination_file)
-            
+
             state_fips = fips_info(state_i.upper(), reverse=True)['fips']
             if file_name == f'csv_h{state_i}.zip':
                 df_h = pd.read_csv(f"{destination_folder}/psam_h{state_fips}.csv", low_memory=False)
                 if year >= 2020:
                     # ACCESSINET(formerly ACCESS), TYPEHUGQ (formerly TYPE).
                     # https://www2.census.gov/programs-surveys/acs/tech_docs/pums/variable_changes/ACS2016-2020_PUMS_Variable_Changes_and_Explanations.pdf
-                    df_h.rename(columns={'ACCESSINET': 'ACCESS'}, inplace=True) # 
+                    df_h.rename(columns={'ACCESSINET': 'ACCESS'}, inplace=True) #
                     df_h.rename(columns={'TYPEHUGQ': 'TYPE'}, inplace=True)
                 if year >= 2021:
                     # FES variable deleted in 2021. Can be recreated from WORKSTAT.
@@ -574,7 +540,7 @@ def pull_pums_data(states, year, verbose=1):
                     df_h.loc[(df_h['WORKSTAT'] == 10)|(df_h['WORKSTAT'] == 11), 'FES'] = 5
                     df_h.loc[(df_h['WORKSTAT'] == 12), 'FES'] = 6
                     df_h.loc[(df_h['WORKSTAT'] == 13)|(df_h['WORKSTAT'] == 14), 'FES'] = 7
-                    df_h.loc[(df_h['WORKSTAT'] == 15), 'FES'] = 8 
+                    df_h.loc[(df_h['WORKSTAT'] == 15), 'FES'] = 8
                 if year >= 2022:
                     # https://www2.census.gov/programs-surveys/acs/tech_docs/pums/variable_changes/ACS2018-2022_PUMS_Variable_Changes_and_Explanations.pdf
                     # We may want to use PUMA10 since that's the definition we were using before
@@ -612,49 +578,49 @@ def pull_pums_data(states, year, verbose=1):
 
 def download_shapefiles(state_fips, year, verbose=1):
     """Function for downloading shapefiles from census web server
-    
+
     Args:
         state_fips (list): List of state abbreviations
         year (str): The year of the shapefiles
         verbose: If 1, print output. If 0, suppress output. Defaults to 1
-        
+
     Returns:
         Outputs data files in the geo folder
     """
-    
+
     file_urls = []
-    
+
     # Set the URL of the file to download
     for state in state_fips:
         file_urls.append((state, f"https://www2.census.gov/geo/tiger/TIGER{year}/BG/tl_{year}_{state}_bg.zip"))
-    
+
     printed_source_header = False
     for state_i in state_fips:
-        
+
         if verbose:
             print("\n*** Running DownloadData.download_shapefiles() ***")
-        
+
         urls_list = [url for state, url in file_urls if state == state_i]
-        
+
         for url in urls_list:
             download_url = url
-            
+
             # Specify the destination folder and file name
             destination_folder = os.path.join(OUTPUT_DIR, "geo")
-            
+
             file_name = os.path.basename(download_url)
             destination_file = os.path.join(destination_folder, file_name)
-            
+
             # Create the destination folder if it doesn't exist
             os.makedirs(destination_folder, exist_ok=True)
-            
+
             # Download the file
-            try_curl_cffi(download_url, destination_file)
-            
+            download(download_url, destination_file, backend="curl_cffi")
+
             # Extract the contents of the zip file
             with zipfile.ZipFile(destination_file, 'r') as zip_ref:
                 zip_ref.extractall(destination_folder)
-            
+
             if verbose:
                 if not printed_source_header:
                     print(f"-- Downloading from https://www2.census.gov/geo/tiger/TIGER{year}/BG/")
@@ -663,16 +629,16 @@ def download_shapefiles(state_fips, year, verbose=1):
 
 def pull_LODES(states_main, states_aux, year, verbose=1):
     """Function for pulling LEHD LODES data (commuting patterns) for given states
-    
+
     Args:
         states_main (list): List of state abbreviations for the main states
         states_aux (list): List of state abbreviations for the auxiliary states
         year (str): The year of the LODES data
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
-        
+
     Returns:
         Outputs data files in the work folder
-        
+
     Notes: No LODES data for 2024 or 2025, so use 2023 data if year > 2023.
     """
     printed_source_header = False
@@ -680,24 +646,24 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
         print("\n*** Running DownloadData.pull_LODES() ***")
     # Determine version based on year
     version = "LODES8" if year >= 2020 else "LODES7"
-    
+
     # For the states on the "main" list, download OD main JT01, OD aux JT01, and WAC S000 JT01
     for state_i in states_main:
         # print(f"*** Downloading LODES data for state = {state_i.upper()} ***")
         state_i = state_i.lower()
         state_dir = os.path.join(OUTPUT_DIR, "work")
         os.makedirs(state_dir, exist_ok=True)
-        
+
         # Download and save OD main JT01
         # print(f"downloading lodes od main {state_i}")
-        
-        # For OD main JT01 
+
+        # For OD main JT01
         if year > 2023:
             year = 2023
         od_main_url = f"https://lehd.ces.census.gov/data/lodes/{version}/{state_i}/od/{state_i}_od_main_JT01_{year}.csv.gz"
         outfile = os.path.join(state_dir, f"{state_i}_od_main_JT01_{year}.csv.gz")
-        try_download(od_main_url, outfile)
-        
+        download(od_main_url, outfile)
+
         # Process the file to match old format
         with gzip.open(outfile, 'rt') as f_in:
             with gzip.open(outfile + '.tmp', 'wt') as f_out:
@@ -705,7 +671,7 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                 header = f_in.readline().strip()
                 # Write new header with year and state
                 f_out.write("year,state," + header + "\n")
-                
+
                 # Process each line
                 for line in f_in:
                     parts = line.strip().split(',')
@@ -719,22 +685,22 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                 print("-- Downloading from https://lehd.ces.census.gov/data/lodes/")
                 printed_source_header = True
             print(f"-- work/{state_i}_od_main_JT01_{year}.csv.gz")
-        
+
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
-        
+
         # For OD aux JT01
         # print(f"downloading lodes od aux {state_i}")
         od_aux_url = f"https://lehd.ces.census.gov/data/lodes/{version}/{state_i}/od/{state_i}_od_aux_JT01_{year}.csv.gz"
         outfile = os.path.join(state_dir, f"{state_i}_od_aux_JT01_{year}.csv.gz")
-        try_download(od_aux_url, outfile)
-        
+        download(od_aux_url, outfile)
+
         # Process the file to match old format
         with gzip.open(outfile, 'rt') as f_in:
             with gzip.open(outfile + '.tmp', 'wt') as f_out:
                 header = f_in.readline().strip() # Read header
                 f_out.write("year,state," + header + "\n")  # Write new header with year and state
-                
+
                 # Process each line
                 for line in f_in:
                     parts = line.strip().split(',')
@@ -748,22 +714,22 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                 print("-- Downloading from https://lehd.ces.census.gov/data/lodes/")
                 printed_source_header = True
             print(f"-- work/{state_i}_od_aux_JT01_{year}.csv.gz")
-        
+
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
-        
+
         # For WAC S000 JT01
         # print(f"downloading lodes wac {state_i}")
         wac_url = f"https://lehd.ces.census.gov/data/lodes/{version}/{state_i}/wac/{state_i}_wac_S000_JT01_{year}.csv.gz"
         outfile = os.path.join(state_dir, f"{state_i}_wac_S000_JT01_{year}.csv.gz")
-        try_download(wac_url, outfile)
-        
+        download(wac_url, outfile)
+
         # Process the file to match old format
         with gzip.open(outfile, 'rt') as f_in:
             with gzip.open(outfile + '.tmp', 'wt') as f_out:
                 header = f_in.readline().strip() # Read header
                 f_out.write("year,state," + header + "\n")  # Write new header with year and state
-                
+
                 # Process each line
                 for line in f_in:
                     parts = line.strip().split(',')
@@ -776,27 +742,27 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                 print("-- Downloading from https://lehd.ces.census.gov/data/lodes/")
                 printed_source_header = True
             print(f"-- work/{state_i}_wac_S000_JT01_{year}.csv.gz")
-        
+
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
-    
+
     # For the states on the "aux" list just download OD aux JT01
     for state_i in states_aux:
         state_dir = os.path.join(OUTPUT_DIR, "work")
         os.makedirs(state_dir, exist_ok=True)
-        
+
         # Download and save OD aux JT01
         # print(f"downloading lodes od aux {state_i}")
         od_aux_url = f"https://lehd.ces.census.gov/data/lodes/{version}/{state_i.lower()}/od/{state_i.lower()}_od_aux_JT01_{year}.csv.gz"
         outfile = os.path.join(state_dir, f"{state_i.lower()}_od_aux_JT01_{year}.csv.gz")
-        try_download(od_aux_url, outfile)
-        
+        download(od_aux_url, outfile)
+
         # Process the file to match old format
         with gzip.open(outfile, 'rt') as f_in:
             with gzip.open(outfile + '.tmp', 'wt') as f_out:
                 header = f_in.readline().strip() # Read header
                 f_out.write("year,state," + header + "\n")  # Write new header with year and state
-                
+
                 # Process each line
                 for line in f_in:
                     parts = line.strip().split(',')
@@ -810,16 +776,16 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
                 print("-- Downloading from https://lehd.ces.census.gov/data/lodes/")
                 printed_source_header = True
             print(f"-- work/{state_i.lower()}_od_aux_JT01_{year}.csv.gz")
-        
+
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
 
 def download_cbp_data(verbose=1):
     """Function for downloading CBP data
-    
+
     Args:
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
-        
+
     Returns:
         Outputs data files in the work folder
     """
@@ -827,21 +793,21 @@ def download_cbp_data(verbose=1):
         print("\n*** Running DownloadData.download_cbp_data() ***")
     cbp_dir = os.path.join(OUTPUT_DIR, "work")
     os.makedirs(cbp_dir, exist_ok=True)
-    
+
     url = "https://www2.census.gov/programs-surveys/cbp/datasets/2016/cbp16co.zip"
     outfile = os.path.join(cbp_dir, "cbp16co.zip")
-    try_download(url, outfile)
+    download(url, outfile)
     if verbose:
         print("-- Downloading from https://www2.census.gov/programs-surveys/cbp/datasets/2016/")
         print("-- work/cbp16co.zip")
 
 def download_ct_puma_crosswalk(main_year, verbose=1):
     """Function for downloading Census Tract to PUMA crosswalk file
-    
+
     Args:
         main_year (str): The year of the crosswalk file
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
-        
+
     Returns:
         Outputs data files in the geo folder
     """
@@ -849,7 +815,7 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
         print("\n*** Running DownloadData.download_ct_puma_crosswalk() ***")
     geo_dir = os.path.join(OUTPUT_DIR, "geo")
     os.makedirs(geo_dir, exist_ok=True)
-    
+
     # https://www2.census.gov/geo/docs/maps-data/data/rel2020/2020_Census_Tract_to_2020_PUMA.txt
     if main_year >= 2020:
         url = "https://www2.census.gov/geo/docs/maps-data/data/rel2020/2020_Census_Tract_to_2020_PUMA.txt"
@@ -857,13 +823,13 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
     else:
         url = "https://www2.census.gov/geo/docs/maps-data/data/rel/2010_Census_Tract_to_2010_PUMA.txt"
         outfile = os.path.join(geo_dir, "2010_Census_Tract_to_2010_PUMA.txt")
-    
+
     # Use text download for these web pages since they display data in browser
-    try_download_text(url, outfile)
+    download(url, outfile, mode="text")
     if verbose:
         print("-- Downloading from https://www2.census.gov/geo/docs/maps-data/data/rel/")
         print(f"-- geo/{os.path.basename(outfile)}")
-        
+
     # urls2018 = ["https://mcdc.missouri.edu/temp/geocorr2018_2523203354.csv", # geocorr2018_puma_to_county.csv
     #             "https://mcdc.missouri.edu/temp/geocorr2018_2523207598.csv", # geocorr2018_puma_to_cbsa.csv
     #             "https://mcdc.missouri.edu/temp/geocorr2018_2523205248.csv", # geocorr2018_puma_urban_rural.csv
@@ -893,20 +859,20 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
     #     try:
     #         response = requests.get(url)
     #         response.raise_for_status()
-            
+
     #         with open(outfile, 'wb') as f:
     #             f.write(response.content)
-            
+
     #         # print(f"Downloaded {outfile}")
     #     except Exception as e:
     #         print(f"Failed to download {url}: {e}")
-            
+
 def geocorr_files(verbose=1):
     """Copy geocorr files from the local 'geocorr' folder into the 'geo' folder.
 
     If main_year < 2020, copies only files matching 'geocorr2018*'.
     If main_year >= 2020, copies only files matching 'geocorr2022*'.
-    
+
     Returns:
         Outputs data files in the geo folder
     """
@@ -919,7 +885,7 @@ def geocorr_files(verbose=1):
         raise FileNotFoundError(
             f"config.json file not found at {config_path}. Please create this file with the required configuration."
         )
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config = json.load(f)
 
     if "main_year" not in config:
@@ -927,8 +893,8 @@ def geocorr_files(verbose=1):
 
     try:
         main_year = int(config["main_year"])
-    except Exception:
-        raise ValueError("main_year in config.json must be an integer.")
+    except (TypeError, ValueError) as e:
+        raise ConfigError("main_year in config.json must be an integer.") from e
 
     if main_year < 2020:
         prefix = "geocorr2018"
@@ -963,27 +929,27 @@ def geocorr_files(verbose=1):
 
 def download_school_data(main_year, verbose=1):
     """Function for downloading school data
-    
+
     Args:
         main_year (str): The year of the school data
         verbose: If 1, print output. If 0, suppress output. Defaults to 1.
-        
+
     Returns:
         Outputs data files in the school folder
-    
+
     Notes: This function uses the python package 'zipfile' to extract the zip file.
-    This will cause an error "NotImplementedError" if the interpreter used to build the environment 
-    does not have full LZMA support. 
-    
+    This will cause an error "NotImplementedError" if the interpreter used to build the environment
+    does not have full LZMA support.
+
     MacOS workaround: use the system 'unzip' command instead of 'zipfile'.
     Windows workaround: use Expand-Archive or 7‑Zip
     """
     school_dir = os.path.join(OUTPUT_DIR, "school")
     os.makedirs(school_dir, exist_ok=True)
-    
+
     if verbose:
         print("\n*** Running DownloadData.download_school_data() ***")
-    
+
     # Download school location data
     # https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_2021.zip
     url = f"https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}.zip"
@@ -1005,12 +971,12 @@ def download_school_data(main_year, verbose=1):
 
     # Extract the zip file
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(school_dir)    
+        zip_ref.extractall(school_dir)
 
     # Move files from extracted folder to main school folder
     extracted_folder = os.path.join(school_dir, f"EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}")
     files_to_move = [f"EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}.xlsx",
-                    "Shapefiles_SCH", "Shapefile_SCH"] # if year > 2019, uses Shapefile_SCH (singular) folder instead of Shapefiles_SCH (plural) 
+                    "Shapefiles_SCH", "Shapefile_SCH"] # if year > 2019, uses Shapefile_SCH (singular) folder instead of Shapefiles_SCH (plural)
 
     for item_to_move in files_to_move:
         source_path = os.path.join(extracted_folder, item_to_move)
@@ -1027,7 +993,7 @@ def download_school_data(main_year, verbose=1):
         #     print(f"Item {item_to_move} not found")
 
     # Normalize school shapefile folder name to 'Shapefiles_SCH'
-    
+
     singular = os.path.join(school_dir, "Shapefile_SCH")
     plural   = os.path.join(school_dir, "Shapefiles_SCH")
 
@@ -1057,12 +1023,12 @@ def download_school_data(main_year, verbose=1):
                 os.remove(item_to_delete)
         # else:
         #     print(f"Item {os.path.basename(item_to_delete)} not found")
-            
+
     # Download school enrollment data
     # print("Downloading school enrollment data... takes a while")
 
     # URLs for school enrollment data
-    
+
     if main_year == 2019:
         en_str = "082120"
     elif main_year == 2020:
@@ -1075,7 +1041,7 @@ def download_school_data(main_year, verbose=1):
         en_str = "073124"
     elif main_year == 2024:
         en_str = "073025"
-    
+
     enrollment_urls = [
         f"https://nces.ed.gov/ccd/Data/zip/ccd_sch_029_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_w_1a_{en_str}.zip",  # Directory
         f"https://nces.ed.gov/ccd/Data/zip/ccd_SCH_052_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_l_1a_{en_str}.zip",  # Membership
@@ -1087,22 +1053,22 @@ def download_school_data(main_year, verbose=1):
         # Extract filename from URL
         filename = url.split('/')[-1]
         zip_path = os.path.join(school_dir, filename)
-        
+
         # print(f"Downloading {filename}...")
         response = requests.get(url, stream=True)
         response.raise_for_status()
-        
+
         # Download the file (overwrite if exists)
         with open(zip_path, 'wb') as f:
             f.write(response.content)
-        
+
         # Extract the outer zip file
-        # This will cause an error "NotImplementedError" if the interpreter used to build the environment 
+        # This will cause an error "NotImplementedError" if the interpreter used to build the environment
         # does not have full LZMA support
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 zip_ref.extractall(school_dir)
-        except NotImplementedError:
+        except NotImplementedError as e:
             system = platform.system()
             zip_basename = os.path.basename(zip_path)
 
@@ -1130,11 +1096,11 @@ def download_school_data(main_year, verbose=1):
 
             else:
                 # Other platforms: re-raise with guidance
-                raise RuntimeError(
+                raise DataError(
                     "ZIP uses a compression method not supported by this Python. "
                     "On Unix-like systems, install a Python build with LZMA support "
                     "or extract the archive manually using system tools."
-                )
+                ) from e
 
         # Handle nested CSV and SAS ZIPs created by NCES (e.g. *_CSV.zip, *_SAS.zip)
         for nested_name in os.listdir(school_dir):
@@ -1149,7 +1115,7 @@ def download_school_data(main_year, verbose=1):
                 try:
                     with zipfile.ZipFile(nested_path, "r") as nested_zip:
                         nested_zip.extractall(school_dir)
-                except NotImplementedError:
+                except NotImplementedError as e:
                     system = platform.system()
                     if system == "Darwin":
                         subprocess.run(
@@ -1169,11 +1135,11 @@ def download_school_data(main_year, verbose=1):
                             check=True,
                         )
                     else:
-                        raise RuntimeError(
+                        raise DataError(
                             "Nested CSV ZIP uses a compression method not supported by this Python. "
                             "On Unix-like systems, install a Python build with LZMA support "
                             "or extract the archive manually using system tools."
-                        )
+                        ) from e
 
                 # Remove the nested CSV zip after extraction
                 if os.path.exists(nested_path):
@@ -1186,17 +1152,17 @@ def download_school_data(main_year, verbose=1):
 
         # Check what files were extracted directly to the school folder
         # print(f"Files in school folder after extraction: {[f for f in os.listdir(path) if f.endswith('.csv') or f.endswith('.sas7bdat')]}")
-        
+
         # Delete .sas7bdat files that were extracted directly to the school folder
         for item in os.listdir(school_dir):
             if item.endswith('.sas7bdat'):
                 file_path = os.path.join(school_dir, item)
                 os.remove(file_path)
                 # print(f"Deleted {item} from school folder")
-        
+
         # Delete the zip file
         files_to_delete = [zip_path]
-        
+
         for item_to_delete in files_to_delete:
             if os.path.exists(item_to_delete):
                 if os.path.isdir(item_to_delete):
@@ -1237,15 +1203,17 @@ class DownloadData:
             cfg_path = os.path.join(self.base_dir, "config.json")
             if not os.path.exists(cfg_path):
                 raise FileNotFoundError(f"config.json file not found at {cfg_path}. Please create this file with the required configuration.")
-            with open(cfg_path, "r") as f:
+            with open(cfg_path) as f:
                 self.config = json.load(f)
         # Initialize OUTPUT_DIR from config["path"] (fallback to package dir)
         global OUTPUT_DIR
         OUTPUT_DIR = self.config.get("path", self.base_dir)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
+        # Opt-in TLS fallback for portals with broken certificate chains
+        set_allow_insecure_downloads(self.config.get("allow_insecure_downloads", False))
         if auto_run:
             self.run_all()
-        
+
     def run_all(self):
         """Run the full download workflow using the loaded configuration."""
         config = self.config
@@ -1254,7 +1222,7 @@ class DownloadData:
             print("============================================================")
             print("Running DownloadData()")
             print("============================================================")
-            
+
         # Basic validation for keys required by multiple steps
         if "census_api_key" not in config:
             raise KeyError("census_api_key not found in config. Please add your Census API key to the configuration.")
@@ -1420,7 +1388,7 @@ class DownloadData:
         """
         mapping_path = os.path.join(OUTPUT_DIR, "census_metadata.json")
         if not refresh and os.path.exists(mapping_path):
-            with open(mapping_path, "r") as f:
+            with open(mapping_path) as f:
                 return json.load(f)
 
         # Recompute from API
@@ -1432,7 +1400,7 @@ class DownloadData:
         else:
             dec_meta = get_census_metadata(name="dec/sf1", vintage=decennial_year)
         metadata_required = pd.concat([acs_meta, dec_meta], ignore_index=True)
-        name_label_mapping = dict(zip(metadata_required["name"], metadata_required["label"]))
+        name_label_mapping = dict(zip(metadata_required["name"], metadata_required["label"], strict=False))
         return name_label_mapping
 
     def pipeline(self):
@@ -1498,9 +1466,9 @@ class DownloadData:
                 "function": "download_ct_puma_crosswalk",
                 "websites": [
                     (
-                        f"https://www2.census.gov/geo/docs/maps-data/data/rel2020/2020_Census_Tract_to_2020_PUMA.txt"
+                        "https://www2.census.gov/geo/docs/maps-data/data/rel2020/2020_Census_Tract_to_2020_PUMA.txt"
                         if main_year >= 2020
-                        else f"https://www2.census.gov/geo/docs/maps-data/data/rel/2010_Census_Tract_to_2010_PUMA.txt"
+                        else "https://www2.census.gov/geo/docs/maps-data/data/rel/2010_Census_Tract_to_2010_PUMA.txt"
                     )
                 ],
                 "output_folder": os.path.join(OUTPUT_DIR, "geo"),
@@ -1582,6 +1550,24 @@ class DownloadData:
             for f in step["files"]:
                 print(f"  - {f}")
             print("")
+
+def download_data(config, *, base_dir=None, verbose=1):
+    """Download every raw dataset the pipeline needs into ``config['path']``.
+
+    Downloads are cached on disk, so re-running skips work already done.
+
+    Args:
+        config: a config dict (see :func:`geopops.make_config`).
+        verbose: 0 for quiet, 1 for progress logging.
+
+    Returns:
+        DownloadData: the completed step, for inspection.
+
+    Raises:
+        DownloadError: if a required file could not be fetched.
+    """
+    return DownloadData(config=config, base_dir=base_dir, verbose=verbose, auto_run=True)
+
 
 def main():
     """Main function to preserve CLI behavior using the class wrapper."""

@@ -1,12 +1,15 @@
 """
-GeneratePop orchestrator class — pure-Python replacement for RunJulia.
-Calls co, households, schools, workplaces, networks, and export modules.
+Population generation: combinatorial optimization, synthesis, and export.
+
+:func:`generate_pop` is the entry point; it returns a :class:`GeneratePop` holding
+every pipeline intermediate so a run can be inspected or a single stage re-run.
 """
 import os
 import json
 import numpy as np
 from collections import defaultdict
 from . import co, households, schools, workplaces, networks, export
+from .exceptions import PipelineStateError
 
 # Package directory (src/geopops/) where config.json lives
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -15,18 +18,22 @@ PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 def load_config(base_dir=None):
     cfg_dir = base_dir if base_dir is not None else PACKAGE_DIR
     config_path = os.path.join(cfg_dir, "config.json")
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         return json.load(f)
 
 
 class GeneratePop:
-    """Orchestrates the synthetic population pipeline in pure Python.
-    Same API as RunJulia: CO(), SynthPop(), Export(), run_all().
+    """A synthetic population run, holding all pipeline intermediates.
+
+    Stages are ``CO()``, ``SynthPop()``, ``Export()``; ``run_all()`` does all three.
+    Prefer :func:`generate_pop` unless you want to drive the stages individually.
     """
 
     def __init__(self, config_dict=None, base_dir=None, output_dir=None,
-                 random_seed=None, verbose=1, auto_run=False, run_all=None):
+                 random_seed=None, verbose=1, auto_run=False, run_all=None,
+                 save_intermediates=True):
         self.verbose = verbose
+        self.save_intermediates = save_intermediates
         self.base_dir = base_dir if base_dir is not None else PACKAGE_DIR
         config = config_dict if config_dict is not None else load_config(self.base_dir)
         if output_dir is not None:
@@ -59,6 +66,9 @@ class GeneratePop:
         self.adj_mat_keys = None
         self.adj_dummy_keys = None
         self.adj_out_workers = None
+        self._cbg_by_idx = None
+        self.ppl = None
+        self.networks = None
 
         if run_all is not None:
             auto_run = run_all
@@ -91,7 +101,8 @@ class GeneratePop:
         """Run combinatorial optimization."""
         self._log("*** Running GeneratePop.CO() ***")
         self.co_results, self.co_scores = co.process_counties(
-            self.data_dir, random_seed=self._stage_random_seeds["co"])
+            self.data_dir, random_seed=self._stage_random_seeds["co"],
+            config=self.config, verbose=self.verbose)
 
     def _county_from_cbg_idx(self, cbg_idx):
         cbg_code = self._cbg_by_idx.get(cbg_idx)
@@ -189,7 +200,7 @@ class GeneratePop:
     def SynthPop(self):
         """Generate synthetic population (households, schools, workplaces, networks)."""
         if self.co_results is None:
-            raise RuntimeError("CO() must be run before SynthPop()")
+            raise PipelineStateError("CO() must be run before SynthPop()")
 
         self._log("\n*** Running GeneratePop.SynthPop() ***")
         self.cbgs, self.people, self.households, self.gqs, self.gq_summary = \
@@ -204,25 +215,22 @@ class GeneratePop:
 
         self.sch_students = schools.generate_schools(
             self.people, self.cbgs, self.data_dir,
-            random_seed=self._stage_random_seeds["schools"])
+            random_seed=self._stage_random_seeds["schools"],
+            config=self.config)
         self._log("\nGenerating schools")
         self._log_school_summary()
 
         self._log("\nGenerating workplaces")
         self._log("-- Generating OD matrices, exporting interim files")
-        self._log("-- processed/od_rows_origins.csv")
-        self._log("-- processed/od_columns_dests.csv")
-        codes_path = os.path.join(self.data_dir, "processed", "codes.json")
-        with open(codes_path, "r", encoding="utf-8") as f:
-            wp_codes = json.load(f)
-        for ind_code in wp_codes.get("ind_codes", []):
-            self._log(f"-- processed/od_{ind_code}.csv.gz")
         (self.company_workers, self.sch_workers, self.gq_workers,
          self.outside_workers, self.dummies) = \
             workplaces.generate_jobs_and_workers(
                 self.people, self.cbgs, self.gqs,
                 self.co_results, self.gq_summary, self.data_dir,
-                random_seed=self._stage_random_seeds["workplaces"])
+                random_seed=self._stage_random_seeds["workplaces"],
+                config=self.config,
+                save_intermediates=self.save_intermediates,
+                verbose=self.verbose)
         self._log_workplace_summary()
 
         self._log("\nGenerating networks")
@@ -238,7 +246,7 @@ class GeneratePop:
     def Export(self):
         """Export population and networks to CSV/MTX files."""
         if self.people is None:
-            raise RuntimeError("SynthPop() must be run before Export()")
+            raise PipelineStateError("SynthPop() must be run before Export()")
 
         self._log("\n*** Running GeneratePop.Export() ***")
         self._log("")
@@ -253,6 +261,11 @@ class GeneratePop:
             self.adj_dummy_keys, self.adj_out_workers,
             verbose=self.verbose)
 
+    @property
+    def pop_export_dir(self):
+        """Directory holding this run's exported population files."""
+        return os.path.join(self.data_dir, "pop_export")
+
     def run_all(self):
         """Run the complete pipeline: CO -> SynthPop -> Export."""
         print("")
@@ -263,3 +276,27 @@ class GeneratePop:
         self.SynthPop()
         self.Export()
 
+
+
+def generate_pop(config, *, seed=None, output_dir=None, base_dir=None, verbose=1,
+                 save_intermediates=True):
+    """Generate a synthetic population: CO, then synthesis, then export.
+
+    Args:
+        config: a config dict (see :func:`geopops.make_config`).
+        seed: master random seed; defaults to ``config['random_seed']``.
+        output_dir: where to write results; defaults to ``config['path']``.
+        verbose: 0 for quiet, 1 for progress logging.
+        save_intermediates: also write the interim ``processed/od_*.csv.gz`` files.
+
+    Returns:
+        GeneratePop: the completed run, holding all pipeline intermediates.
+
+    Example::
+
+        pop = geopops.generate_pop(cfg, seed=42)
+        pop.people, pop.households, pop.adj_hh
+    """
+    return GeneratePop(config_dict=config, base_dir=base_dir, output_dir=output_dir,
+                       random_seed=seed, verbose=verbose, auto_run=True,
+                       save_intermediates=save_intermediates)
