@@ -136,7 +136,7 @@ def _assign_teachers_to_grades(school_key, students_by_grade, sch_workers_for_sc
     proportions = np.array([grade_counts[g] / total for g in grade_list])
     n_per_grade = lrRound(proportions * n_teachers)
     teacher_grades = []
-    for g, n in zip(grade_list, n_per_grade, strict=False):
+    for g, n in zip(grade_list, n_per_grade):
         teacher_grades.extend([g] * n)
     return [(t[0], t[1], t[2], teacher_grades[i] if i < len(teacher_grades) else '0')
             for i, t in enumerate(teachers)]

@@ -1,14 +1,7 @@
-'''
-Copyright 2023 Alexander Tulchinsky
-
-This file is part of Greasypop.
-
-Greasypop is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-Greasypop is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License along with Greasypop. If not, see <https://www.gnu.org/licenses/>.
-'''
+"""
+Census data processing: turn raw ACS/decennial/PUMS/LODES/school downloads into
+the targets and sample pools that the combinatorial optimization step consumes.
+"""
 
 import pandas as pd
 import numpy as np
@@ -237,7 +230,7 @@ def read_psamp(LODES_cutoff, ind_codes, occ_codes):
     psamp['ST'] = psamp['ST'].astype(str).str.strip()
     psamp['PUMA'] = psamp['PUMA'].astype(str).str.strip().str.zfill(5)
     psamp['st_puma'] = psamp['ST'] + psamp['PUMA']
-    psamp['sch_grade'] = psamp['SCHG'].map(dict(zip([str(x) for x in range(1,17)], ['p','k',*[str(x) for x in range(1,13)],'c','g'], strict=False)))
+    psamp['sch_grade'] = psamp['SCHG'].map(dict(zip([str(x) for x in range(1,17)], ['p','k',*[str(x) for x in range(1,13)],'c','g'])))
     # print('sch_grade',psamp['sch_grade'].unique())
     ## using 2-digit industry and occupation codes
     psamp["industry"] = psamp["NAICSP"].fillna("").str.slice(0,2)
@@ -862,7 +855,7 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
     pcols = [c+'_p|ninst1864civ' for c in cols]
 
     ## PWGTP = individual "weight" according to the pums sample data
-    for c,pc in zip(cols,pcols, strict=False):
+    for c,pc in zip(cols,pcols):
         s_noninst_civ[pc] = s_noninst_civ[c] * s_noninst_civ['PWGTP']
     s_noninst_mil = p_summary.loc[(p_summary['RELSHIPP'] == '38')
                                 & (p_summary['armed_forces'] == 1)
@@ -871,7 +864,7 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
 
     cols_mil = [c+'_p|milGQ' for c in cols]
 
-    for c,pc in zip(cols,cols_mil, strict=False):
+    for c,pc in zip(cols,cols_mil):
         s_noninst_mil[pc] = s_noninst_mil[c] * s_noninst_mil['PWGTP']
 
     ## not many GQ residents represented in PUMS samples
@@ -1322,7 +1315,7 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     acs_tables['county'] = acs_tables.index.map(lambda x: x[0:5])
 
     ## income data
-    for k,v in zip(inc_cats,inc_cols, strict=False):
+    for k,v in zip(inc_cats,inc_cols):
         acs_tables['B19001:'+k] = acs_tables[['B19001:'+x for x in v]].sum(axis=1)
 
     # print("Writing Census targets")
@@ -1569,10 +1562,10 @@ def generate_work_sizes(random_seed=None):
     b =   [5,10,20,50,100,250,500,1000,1500,2500,5000,30000]
     ## don't believe 0 cells?
     adj_z = 0.5
-    sim_dist = [np.concatenate([rng.integers(l,h,np.int64(s)) for (l,h,s) in zip(a,b, 1000*(adj_z+cbp.iloc[r,2:]), strict=False)]) for r in range(cbp.shape[0])]
+    sim_dist = [np.concatenate([rng.integers(l,h,np.int64(s)) for (l,h,s) in zip(a,b, 1000*(adj_z+cbp.iloc[r,2:]))]) for r in range(cbp.shape[0])]
     mu_l = [np.mean(np.log(s)) for s in sim_dist]
     mu_sz = [np.mean(s) for s in sim_dist]
-    imp_v = [2.0*(np.log(a) - b) for (a,b) in zip(mu_sz, mu_l, strict=False)]
+    imp_v = [2.0*(np.log(a) - b) for (a,b) in zip(mu_sz, mu_l)]
 
     cbp['mu_ln'] = mu_l
     cbp['sigma_ln'] = np.sqrt(imp_v)

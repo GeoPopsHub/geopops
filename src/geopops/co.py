@@ -92,7 +92,7 @@ def read_targets(data_dir):
 
 def read_hh_counts(data_dir):
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'hh_counts.csv'), dtype={'Geo': str})
-    return dict(zip(df.iloc[:, 0], df.iloc[:, 1], strict=False))
+    return dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
 
 
 def read_samples(data_dir):
@@ -105,10 +105,10 @@ def read_samples(data_dir):
 def read_targ_geo(data_dir):
     cols = ['Geo', 'st_puma', 'cbsa', 'county', 'R', 'U']
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'cbg_geo.csv'), usecols=cols, dtype={'Geo': str, 'st_puma': str, 'cbsa': str, 'county': str})
-    cbg_puma = dict(zip(df['Geo'], df['st_puma'], strict=False))
-    cbg_county = dict(zip(df['Geo'], df['county'], strict=False))
-    cbg_cbsa = dict(zip(df['Geo'], df['cbsa'], strict=False))
-    cbg_urban = dict(zip(df['Geo'], df['U'], strict=False))
+    cbg_puma = dict(zip(df['Geo'], df['st_puma']))
+    cbg_county = dict(zip(df['Geo'], df['county']))
+    cbg_cbsa = dict(zip(df['Geo'], df['cbsa']))
+    cbg_urban = dict(zip(df['Geo'], df['U']))
     return cbg_puma, cbg_county, cbg_cbsa, cbg_urban
 
 
@@ -173,7 +173,7 @@ def optimize(samples, samp_lookups, targs, n_hhs, params, rng):
     """Run annealing for each target. Returns list of (indices, gen, score, temp)."""
     cache = {}
     results = []
-    for (key, idxs), targ, n in zip(samp_lookups, targs, n_hhs, strict=False):
+    for (key, idxs), targ, n in zip(samp_lookups, targs, n_hhs):
         sub = _subpool(samples, key, idxs, cache)
         results.append(anneal(sub, idxs, targ[np.newaxis, :], n, params, rng))
     return results
@@ -242,8 +242,8 @@ def process_counties(data_dir, counties=None, random_seed=None, config=None, ver
 
         log(f"\nCounty {c}: {len(geos)} CBGs\n")
         log(f"Optimizing {len(geos)} CBGs at PUMA level")
-        x = optimize(samples, sample_lookup(samp_geo, 'st_puma', [cbg_puma[g] for g in geos]),
-                     targs, n_hhs, params, rng)
+        samp_lookups = sample_lookup(samp_geo, 'st_puma', [cbg_puma[g] for g in geos])
+        x = optimize(samples, samp_lookups, targs, n_hhs, params, rng)
         _score_report("PUMA", x, c_val, log)
 
         # Progressively broaden the candidate pool for CBGs that still fit poorly.

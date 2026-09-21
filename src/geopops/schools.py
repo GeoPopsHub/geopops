@@ -11,7 +11,7 @@ from .utils import tryJSON
 def read_sch_cap(data_dir):
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'schools.csv'),
                      usecols=['NCESSCH', 'STUDENTS'], dtype={'NCESSCH': str})
-    return dict(zip(df['NCESSCH'], df['STUDENTS'], strict=False))
+    return dict(zip(df['NCESSCH'], df['STUDENTS']))
 
 
 def find_closest(data_dir, n):
@@ -32,7 +32,7 @@ def find_closest(data_dir, n):
     geoids = distmat['GEOID'].to_numpy()
 
     closest = {}
-    for gk, gl in zip(grade_keys, grade_labels, strict=False):
+    for gk, gl in zip(grade_keys, grade_labels):
         col = f'G_{gl}_OFFERED'
         if col not in schools.columns:
             continue
@@ -58,7 +58,7 @@ def find_closest(data_dir, n):
         col_names = np.array(valid_cols, dtype=object)
         closest[gk] = {
             geo: col_names[row_order[np.isfinite(dists[i, row_order])]].tolist()
-            for i, (geo, row_order) in enumerate(zip(geoids, order, strict=False))
+            for i, (geo, row_order) in enumerate(zip(geoids, order))
         }
     return closest
 

@@ -18,7 +18,7 @@ def read_counties(data_dir):
 def read_hh_serials(data_dir):
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'hh_samples.csv'),
                      usecols=['SERIALNO'], dtype={'SERIALNO': str})
-    return dict(zip(df['SERIALNO'], range(1, len(df) + 1), strict=False))
+    return dict(zip(df['SERIALNO'], range(1, len(df) + 1)))
 
 
 def read_psamp_df(data_dir, ind_codes, additional_traits):

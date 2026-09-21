@@ -62,7 +62,7 @@ def group_commuters_by_origin(people, cbgs, ind_codes, rng):
         workers = list(zip(group['id'].astype(int).tolist(),
                            group['hh'].astype(int).tolist(),
                            group['cbg'].astype(int).tolist(),
-                           group['income'].tolist(), strict=False))
+                           group['income'].tolist()))
         rng.shuffle(workers)
         worker_keys[cat_code][cbg_code] = workers
 
@@ -101,7 +101,7 @@ def read_workers_by_cat(co_results, data_dir, ind_codes, counties):
         for ori, hhvec in co_results[co].items():
             rows = [row_of[x] for x in hhvec if x in row_of]
             totals = np.nansum(counts[rows], axis=0) if rows else np.zeros(len(ind_codes))
-            for cat_code, total in zip(ind_codes, totals, strict=False):
+            for cat_code, total in zip(ind_codes, totals):
                 workers_by_cat[cat_code][ori] = int(total)
     return workers_by_cat
 
@@ -114,7 +114,7 @@ def read_gq_workers_by_cat(gq_summary, ind_codes):
         col = 'ind_' + cat_code
         vals = (gq_summary[col].to_numpy(dtype=float) if col in gq_summary.columns
                 else np.zeros(len(geos)))
-        gq_by_cat[cat_code] = dict(zip(geos, vals.astype(np.int64).tolist(), strict=False))
+        gq_by_cat[cat_code] = dict(zip(geos, vals.astype(np.int64).tolist()))
     return gq_by_cat
 
 
@@ -132,7 +132,7 @@ def read_od_matrix(data_dir, k, m, n):
 def read_outside_origins(data_dir, ind_codes):
     """Counts of workers commuting from outside the synth area."""
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'work_cats_live_outside.csv'))
-    tmp = dict(zip(df.iloc[:, 0], df.iloc[:, 1], strict=False))
+    tmp = dict(zip(df.iloc[:, 0], df.iloc[:, 1]))
     return {k: int(round(tmp.get('C24030:' + k, 0))) for k in ind_codes}
 
 
@@ -187,7 +187,7 @@ def read_county_stats(data_dir):
     """Employer size stats (lognormal mu, sigma) by county."""
     df = pd.read_csv(os.path.join(data_dir, 'processed', 'work_sizes.csv'),
                      usecols=['county', 'mu_ln', 'sigma_ln'], dtype={'county': str})
-    return dict(zip(df['county'], zip(df['mu_ln'], df['sigma_ln'], strict=False), strict=False))
+    return dict(zip(df['county'], zip(df['mu_ln'], df['sigma_ln'])))
 
 
 def read_school_info(data_dir):
@@ -202,7 +202,7 @@ def read_school_info(data_dir):
 
     schools = pd.read_csv(os.path.join(data_dir, 'processed', 'schools.csv'),
                           usecols=['NCESSCH', 'TEACHERS'], dtype={'NCESSCH': str})
-    sch_n_teachers = dict(zip(schools['NCESSCH'], schools['TEACHERS'].astype(int), strict=False))
+    sch_n_teachers = dict(zip(schools['NCESSCH'], schools['TEACHERS'].astype(int)))
     return sch_n_teachers, closest_cbg
 
 
@@ -511,7 +511,7 @@ def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_di
         work_outside_counts = od_counts[:, -1].copy()
         od_counts = od_counts[:, :-1]
         dest_idx_local = {d: i for i, d in enumerate(dest_labels[:-1])}
-        work_outside = dict(zip(origin_labels, work_outside_counts, strict=False))
+        work_outside = dict(zip(origin_labels, work_outside_counts))
 
         # Schools
         if ckey == 'EDU':

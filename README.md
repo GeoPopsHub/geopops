@@ -66,7 +66,7 @@ Results land in `<path>/pop_export/`: `people.csv` and `hh.csv` describe the age
 
 ## License
 
-GeoPops is licensed under the [GNU Affero General Public License v3.0 or later](LICENSE). It builds on [GREASYPOP-CO](https://github.com/CDDEP-DC/GREASYPOP-CO) (Copyright 2023 Alexander Tulchinsky), which is AGPL-3.0-or-later; see [NOTICE](NOTICE) for full attribution.
+GeoPops is licensed under the [MIT License](LICENSE).
 
 ## Support
 GeoPops is a collaboration between the following institutions:

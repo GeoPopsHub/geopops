@@ -87,7 +87,7 @@ class PersonData:
     @property
     def traits(self):
         """The person's config-driven traits as a ``{name: value}`` dict."""
-        return dict(zip(self.schema.names, self.trait_values, strict=False))
+        return dict(zip(self.schema.names, self.trait_values))
 
 
 @dataclass(slots=True)
@@ -149,7 +149,7 @@ def ranges(vec):
     vec = [int(x) for x in vec]
     x = np.cumsum(vec)
     starts = np.concatenate([[1], x[:-1] + 1]).astype(int)
-    return list(zip(starts.tolist(), x.tolist(), strict=False))
+    return list(zip(starts.tolist(), x.tolist()))
 
 
 def drawCounts(v, n=1, rng=None):

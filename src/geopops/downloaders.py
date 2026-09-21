@@ -121,8 +121,7 @@ def fips_info(fips_codes, reverse=False):
 # Downloading
 # ---------------------------------------------------------------------------
 
-# Browser-like headers: several federal data portals reject requests that do not
-# look like they came from a browser.
+# Use browser-like headers to get the actual text content
 _BROWSER_HEADERS = {
     "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                    "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"),
@@ -378,7 +377,7 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
             data = data.astype(str) # Convert all columns to string
             data_labels = ACS_metadata[ACS_metadata["name"].isin(data.columns)][["name", "label"]] # Get labels from metadata
 
-            label_dict = dict(zip(data_labels["name"], data_labels["label"], strict=False)) # Create a dictionary of column names to labels
+            label_dict = dict(zip(data_labels["name"], data_labels["label"])) # Create a dictionary of column names to labels
             all_labels = {col: col for col in data.columns} # Ensure all columns have a label
             all_labels.update(label_dict)
             label_df = pd.DataFrame([all_labels]) # Create a DataFrame with labels as the first row
@@ -438,7 +437,7 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
             data_labels = DEC_metadata[DEC_metadata["name"].isin(data.columns)][["name", "label"]] # Get labels from metadata
 
 
-            label_dict = dict(zip(data_labels["name"], data_labels["label"], strict=False)) # Create a dictionary of column names to labels
+            label_dict = dict(zip(data_labels["name"], data_labels["label"])) # Create a dictionary of column names to labels
             all_labels = {col: col for col in data.columns} # Ensure all columns have a label
             all_labels.update(label_dict)
             label_df = pd.DataFrame([all_labels]) # Create a DataFrame with labels as the first row
@@ -1400,7 +1399,7 @@ class DownloadData:
         else:
             dec_meta = get_census_metadata(name="dec/sf1", vintage=decennial_year)
         metadata_required = pd.concat([acs_meta, dec_meta], ignore_index=True)
-        name_label_mapping = dict(zip(metadata_required["name"], metadata_required["label"], strict=False))
+        name_label_mapping = dict(zip(metadata_required["name"], metadata_required["label"]))
         return name_label_mapping
 
     def pipeline(self):

@@ -103,6 +103,5 @@
     "gq_K": 12,
     "netw_K": 8,
     "netw_B": 0.25,
-    "census_api_key": "ca5103b853992f7a73bcc3d82b96322486efafeb",
-    "julia_env_path": "/home/cliffk/.julia/environments/v1.9/"
+    "census_api_key": null
 }

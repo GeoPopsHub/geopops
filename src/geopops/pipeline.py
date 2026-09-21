@@ -1,7 +1,7 @@
 """Top-level pipeline orchestrator for GeoPops."""
 
 from .config import make_config, validate_config
-from .sources import download_data
+from .downloaders import download_data
 from .census import process_data
 from .population import generate_pop
 from .starsim_bridge import to_starsim_people, starsim_networks

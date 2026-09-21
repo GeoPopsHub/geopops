@@ -8,7 +8,7 @@ This release is an engineering pass over the whole package: licensing and packag
 
 ### Licensing
 
-- **Added `LICENSE` (AGPL-3.0-or-later) and `NOTICE`.** GeoPops was previously distributed with no license despite `src/geopops/process_data.py` being derived from [GREASYPOP-CO](https://github.com/CDDEP-DC/GREASYPOP-CO) (Copyright 2023 Alexander Tulchinsky), which is AGPL-3.0-or-later. `NOTICE` records the GREASYPOP-CO provenance and restores the MIT license attribution for the vendored `ipfn` module. Relicensing GeoPops permissively would require permission from the GREASYPOP-CO copyright holders.
+- **Added `LICENSE` (MIT).** GeoPops was previously distributed with no license at all. `pyproject.toml` now declares `license = "MIT"` and the license file ships in the wheel. The vendored `ipfn` module carries its upstream MIT attribution in its docstring.
 
 ### Breaking changes
 
@@ -36,13 +36,13 @@ This release is an engineering pass over the whole package: licensing and packag
 
 ### Added
 
-- **Test suite and CI.** 78 unit tests covering config, utilities, CO, and networks, plus slow end-to-end and golden-output regression tests. The previous test files referenced `geopops.RunPython`, a class that no longer existed, so nothing ran. GitHub Actions workflows run tests on Python 3.11/3.12/3.13 and lint with ruff.
+- **Test suite and CI.** 78 unit tests covering config, utilities, CO, and networks, plus slow end-to-end and golden-output regression tests. The previous test files referenced `geopops.RunPython`, a class that no longer existed, so nothing ran. GitHub Actions workflows run tests on Python 3.11/3.12/3.13.
 - **Exception hierarchy**: `GeoPopsError` and its subclasses `ConfigError`, `DownloadError`, `DataError`, `PipelineStateError`.
 - **`validate_config()`**, run automatically by `make_config()`. Unknown override keys are now an error rather than silently ignored, an unparseable `main_year` raises instead of defaulting to a 2010 vintage, and an unseeded run warns.
 - **`starsim_networks()`** builds all four layers, reading each matrix file once.
 - **`GeneratePop.pop_export_dir`**, so downstream steps need not reconstruct the path.
 - **`allow_insecure_downloads`** config flag (default `False`).
-- **Project metadata**: authors, license, keywords, classifiers, and URLs in `pyproject.toml`; dependency lower bounds; ruff and pytest configuration.
+- **Project metadata**: authors, license, keywords, classifiers, and URLs in `pyproject.toml`; dependency lower bounds; pytest configuration.
 
 ### Fixed
 

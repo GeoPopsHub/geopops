@@ -20,7 +20,7 @@ or, all at once::
 from .exceptions import (GeoPopsError, ConfigError, DownloadError, DataError,
                          PipelineStateError)
 from .config import make_config, load_config, save_config, validate_config
-from .sources import DownloadData, download_data, download
+from .downloaders import DownloadData, download_data, download
 from .census import ProcessData, process_data, quality_check
 from .population import GeneratePop, generate_pop
 from .pipeline import run

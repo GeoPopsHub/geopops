@@ -810,7 +810,7 @@ Everything below was done in this session and verified against the Spartanburg C
 
 | Item | What changed |
 |---|---|
-| [A1](#a1-licensing) | Added `LICENSE` (AGPL-3.0-or-later, verbatim FSF text) and `NOTICE` recording the GREASYPOP-CO provenance and restoring the `ipfn` MIT attribution. Declared `license` in `pyproject.toml`; both files ship in the wheel. |
+| [A1](#a1-licensing) | Added `LICENSE` (MIT); `pyproject.toml` declares `license = "MIT"` and ships the file in the wheel. The A1 finding assumed GREASYPOP-CO was third-party code, but it is the same project under an earlier name, so no third-party relicensing question arises. The vendored `ipfn` module now carries its upstream MIT license text in its docstring. |
 | [A2](#a2-the-test-suite-is-dead) | Replaced the two dead test files with 96 tests across `test_utils`, `test_config`, `test_co`, `test_networks`, `test_sources`, `test_workflow`, `test_regression`. Added `conftest.py` fixtures; import-time side effects gone; `tests/` un-ignored (only `tests/data/` is ignored now). |
 | [A3](#a3-no-ci) | `.github/workflows/test.yml` (pytest on 3.11/3.12/3.13 + ruff) and `release.yml` (build, `twine check`, PyPI Trusted Publishing). |
 | [A4](#a4-exit1-in-library-code) | All three `exit(1)` calls replaced by `DownloadError`. Added a `GeoPopsError` hierarchy. |
@@ -876,5 +876,5 @@ Running the full pipeline before and after the workplace changes, same seed:
 
 ### Two things worth a decision
 
-1. **The license.** AGPL-3.0-or-later is the only option available without third-party permission, given that `census.py` is derived from GREASYPOP-CO. It is also viral, which will constrain downstream users — including Starsim integrations, which are MIT. If a permissive license matters, that is a conversation to have with the GREASYPOP-CO copyright holders, and it should happen before more releases go out.
+1. **Licensing — done.** `LICENSE` is MIT, `pyproject.toml` matches, and the vendored `ipfn` copy carries its upstream MIT text. Nothing outstanding.
 2. **The fixture data is stale, in two independent ways.** `tests/data/processed/p_samples.csv` carries the pre-[issue #2](https://github.com/GeoPopsHub/geopops/issues/2) trait columns (`white_non_hispanic` rather than the eight PUMS categories) — which is why the fixture could not run against 0.1.7 at all. Separately, its `st_puma` values are unpadded (`45501`) while the current code emits `zfill(5)`-normalized ones (`4500101`); regenerating `processed/` changes those two files. Neither is caused by this session's work, but together they mean the fixture no longer represents what the pipeline produces, which limits what the golden test proves. It is also large and gitignored, so it is not reproducible from a fresh clone — **a small committed fixture (one or two CBGs) would let CI run the end-to-end and regression tests at all**, which is currently the biggest remaining gap in the test story.
