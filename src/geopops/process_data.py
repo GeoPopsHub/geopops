@@ -21,6 +21,7 @@ from glob import glob
 import json
 
 from . import ipfn
+from .write_config import load_config
 
 def tryJSON(filename):
     try:
@@ -1644,420 +1645,379 @@ def generate_schools(geos, main_year):
     # print(" - Processing school data complete")
     return None
 
+def process_data(config=None, base_dir=None, verbose=1):
+    """Run the full census processing pipeline for the given configuration.
 
-class ProcessData:
-    """Orchestrates census processing using the existing functions in this module.
+    Args:
+        config (dict, optional): Config dict, e.g. from write_config(). If not
+            provided, loads via load_config(base_dir) (merging config.local.json).
+        base_dir (str, optional): Base directory to use for relative paths.
+            Defaults to this file's directory.
+        verbose: If 1, print output. If 0, suppress output. Defaults to 1.
 
-    Mirrors the pattern used by `Downloader` so it can be imported and run from other code.
+    Returns:
+        dict: The config dict that was used.
     """
+    base_dir = base_dir if base_dir is not None else BASE_DIR
+    if config is None:
+        config = load_config(base_dir)
 
-    def __init__(self, config_dict=None, base_dir=None, verbose=1, auto_run=True):
-        """Create a census runner.
+    # Set module-level variables for use by other functions in this module.
+    # `config` can't be declared `global` here since it's also the parameter
+    # name (that would shadow the parameter for the whole function body), so
+    # it's set directly in the module namespace instead.
+    global OUTPUT_DIR, PROCESSED_DIR
+    globals()["config"] = config
+    OUTPUT_DIR = config.get("path", base_dir)
+    PROCESSED_DIR = os.path.join(OUTPUT_DIR, "processed")
 
-        Args:
-            config_dict: Optional dict with configuration. If provided, takes precedence over loading from config.json.
-            base_dir: Optional base dir to use for relative paths. Defaults to this file's directory.
-            verbose: If truthy, print progress logs. Defaults to 1.
-        """
-        self.base_dir = base_dir if base_dir is not None else BASE_DIR
-        self.verbose = verbose
-
-        if config_dict is not None:
-            self.config = config_dict
-        else:
-            cfg_path = os.path.join(self.base_dir, "config.json")
-            if not os.path.exists(cfg_path):
-                raise FileNotFoundError(f"config.json file not found at {cfg_path}. Please create this file with the required configuration.")
-            with open(cfg_path, "r") as f:
-                self.config = json.load(f)
-
-        # Set module-level variables for use by other functions
-        global config, OUTPUT_DIR, PROCESSED_DIR
-        config = self.config
-        OUTPUT_DIR = self.config.get("path", self.base_dir)
-        PROCESSED_DIR = os.path.join(OUTPUT_DIR, "processed")
-
-        # Initialize parameters derived from config
-        self._init_parameters()
-
-        if auto_run:
-            self.run_all()
-
-    def _log(self, msg):
-        if self.verbose:
+    def _log(msg):
+        if verbose:
             print(msg)
 
-    def _init_parameters(self):
-        """Compute and cache configuration-derived parameters used across steps."""
-        d = self.config
+    # --- Parameters derived from config (was ProcessData._init_parameters) ---
 
-        # Industries and occupations to use in the synth pop
-        # each associated with codes from PUMS and column names from processed census data
-        self.ind_codes = {
-            'AGR_EXT': (["11", "21"], 'Agriculture, forestry, fishing and hunting, and mining:'),
-            'CON': (["23"], 'Construction'),
-            'MFG': (["31", "32", "33", "3M"], 'Manufacturing'),
-            'WHL': (["42"], 'Wholesale trade'),
-            'RET': (["44", "45", "4M"], 'Retail trade'),
-            'TRN_UTL': (["48", "49", "22"], 'Transportation and warehousing, and utilities:'),
-            'INF': (["51"], 'Information'),
-            'FIN': (["52", "53"], 'Finance and insurance, and real estate, and rental and leasing:'),
-            'PRF': (["54", "55", "56"], 'Professional, scientific, and management, and administrative, and waste management services:'),
-            'EDU': (["61"], 'Educational services, and health care and social assistance:Educational services'),
-            'MED': (["62"], 'Educational services, and health care and social assistance:Health care and social assistance'),
-            'ENT_art': (["71"], 'Arts, entertainment, and recreation, and accommodation and food services:Arts, entertainment, and recreation'),
-            'ENT_food': (["72"], 'Arts, entertainment, and recreation, and accommodation and food services:Accommodation and food services'),
-            'SRV': (["81"], 'Other services, except public administration'),
-            'ADM_MIL': (["92"], 'ADM_MIL'),
-        }
+    # Industries and occupations to use in the synth pop
+    # each associated with codes from PUMS and column names from processed census data
+    ind_codes = {
+        'AGR_EXT': (["11", "21"], 'Agriculture, forestry, fishing and hunting, and mining:'),
+        'CON': (["23"], 'Construction'),
+        'MFG': (["31", "32", "33", "3M"], 'Manufacturing'),
+        'WHL': (["42"], 'Wholesale trade'),
+        'RET': (["44", "45", "4M"], 'Retail trade'),
+        'TRN_UTL': (["48", "49", "22"], 'Transportation and warehousing, and utilities:'),
+        'INF': (["51"], 'Information'),
+        'FIN': (["52", "53"], 'Finance and insurance, and real estate, and rental and leasing:'),
+        'PRF': (["54", "55", "56"], 'Professional, scientific, and management, and administrative, and waste management services:'),
+        'EDU': (["61"], 'Educational services, and health care and social assistance:Educational services'),
+        'MED': (["62"], 'Educational services, and health care and social assistance:Health care and social assistance'),
+        'ENT_art': (["71"], 'Arts, entertainment, and recreation, and accommodation and food services:Arts, entertainment, and recreation'),
+        'ENT_food': (["72"], 'Arts, entertainment, and recreation, and accommodation and food services:Accommodation and food services'),
+        'SRV': (["81"], 'Other services, except public administration'),
+        'ADM_MIL': (["92"], 'ADM_MIL'),
+    }
 
-        self.occ_codes = {
-            'MBSA': (["11", "13", "15", "17", "19", "21", "23", "27"], 'MBSA'),
-            'EDU': (["25"], 'EDU'),
-            'MED': (["29"], 'MED'),
-            'HLS': (["31"], 'Service occupations:Healthcare support occupations'),
-            'PRT': (["33"], 'Service occupations:Protective service occupations:'),
-            'EAT': (["35"], 'Service occupations:Food preparation and serving related occupations'),
-            'CLN': (["37"], 'Service occupations:Building and grounds cleaning and maintenance occupations'),
-            'PRS': (["39"], 'Service occupations:Personal care and service occupations'),
-            'SAL': (["41"], 'Sales and office occupations:Sales and related occupations'),
-            'OFF': (["43"], 'Sales and office occupations:Office and administrative support occupations'),
-            'FFF_RPR': (["45", "47", "49"], 'Natural resources, construction, and maintenance occupations:'),
-            'PRD_TRN': (["51", "53"], 'Production, transportation, and material moving occupations:'),
-            'MIL': (["55"], 'MIL'),
-        }
+    occ_codes = {
+        'MBSA': (["11", "13", "15", "17", "19", "21", "23", "27"], 'MBSA'),
+        'EDU': (["25"], 'EDU'),
+        'MED': (["29"], 'MED'),
+        'HLS': (["31"], 'Service occupations:Healthcare support occupations'),
+        'PRT': (["33"], 'Service occupations:Protective service occupations:'),
+        'EAT': (["35"], 'Service occupations:Food preparation and serving related occupations'),
+        'CLN': (["37"], 'Service occupations:Building and grounds cleaning and maintenance occupations'),
+        'PRS': (["39"], 'Service occupations:Personal care and service occupations'),
+        'SAL': (["41"], 'Sales and office occupations:Sales and related occupations'),
+        'OFF': (["43"], 'Sales and office occupations:Office and administrative support occupations'),
+        'FFF_RPR': (["45", "47", "49"], 'Natural resources, construction, and maintenance occupations:'),
+        'PRD_TRN': (["51", "53"], 'Production, transportation, and material moving occupations:'),
+        'MIL': (["55"], 'MIL'),
+    }
 
-        # Default income categories
-        self.inc_cats_def = ['q1_1', 'q1_2', 'q1_3', 'q2', 'q3', 'q4', 'q5']
-        self.inc_cols_def = [
-            ['Less than $10,000'],
-            ['$10,000 to $14,999', '$15,000 to $19,999', '$20,000 to $24,999'],
-            ['$25,000 to $29,999', '$30,000 to $34,999', '$35,000 to $39,999'],
-            ['$40,000 to $44,999', '$45,000 to $49,999', '$50,000 to $59,999', '$60,000 to $74,999'],
-            ['$75,000 to $99,999', '$100,000 to $124,999'],
-            ['$125,000 to $149,999', '$150,000 to $199,999'],
-            ['$200,000 or more'],
+    # Default income categories
+    inc_cats_def = ['q1_1', 'q1_2', 'q1_3', 'q2', 'q3', 'q4', 'q5']
+    inc_cols_def = [
+        ['Less than $10,000'],
+        ['$10,000 to $14,999', '$15,000 to $19,999', '$20,000 to $24,999'],
+        ['$25,000 to $29,999', '$30,000 to $34,999', '$35,000 to $39,999'],
+        ['$40,000 to $44,999', '$45,000 to $49,999', '$50,000 to $59,999', '$60,000 to $74,999'],
+        ['$75,000 to $99,999', '$100,000 to $124,999'],
+        ['$125,000 to $149,999', '$150,000 to $199,999'],
+        ['$200,000 or more'],
+    ]
+
+    # Geos and commute states
+    geos = config.get("geos", None)
+    if geos is not None:
+        geos = [str(x) for x in geos]
+    commute_states = config.get("commute_states", None)
+    if commute_states is not None:
+        commute_states = [str(x).zfill(2) for x in commute_states]
+
+    main_year = config.get("main_year", None)
+
+    # ADJINC and income categories
+    ADJINC = config.get("inc_adj", 1.010145)
+    inc_cats = config.get("inc_cats", inc_cats_def)
+    inc_cols = config.get("inc_cols", inc_cols_def)
+    LODES_cutoff = config.get("LODES_annual_income_boundary", 40000)
+
+    # Additional traits to include in p_samples summary
+    more_summary_cols = config.get(
+        "additional_traits",
+        ['sch_public', 'sch_private', 'female',
+         'race_white_alone', 'race_black_alone', 'race_amerindian_or_alaskan',
+         'race_asian_alone', 'race_pacific_alone', 'race_other_alone',
+         'race_two_or_more', 'hispanic'],
+    )
+
+    # Make a list of column names for B11012. Wording is different in 2019 and 2020.
+    B11012 = read_acs('B11012', geos)
+    B11012_lst = [col.split(':')[2] for col in B11012.columns if len(col.split(':')) > 2]
+
+    # Target columns to match in synth pop
+    # (read from census or generated in generate_targets())
+    target_columns = ['B11016:Family households:2-person household',
+        'B11016:Family households:3-person household',
+        'B11016:Family households:4-person household',
+        'B11016:Family households:5-person household',
+        'B11016:Family households:6-person household',
+        'B11016:Family households:7-or-more person household',
+        'B11016:Nonfamily households:1-person household',
+        'B11016:Nonfamily households:2-person household',
+        'B11016:Nonfamily households:3-person household',
+        'B11016:Nonfamily households:4-person household',
+        'B11016:Nonfamily households:5-person household',
+        'B11016:Nonfamily households:6-person household',
+        'B11016:Nonfamily households:7-or-more person household',
+        ## covers distribution of workers per household reasonably well:
+        'B23009:With own children of the householder under 18 years:Married-couple family:No workers',
+        'B23009:With own children of the householder under 18 years:Married-couple family:1 worker',
+        'B23009:With own children of the householder under 18 years:Married-couple family:2 workers:',
+        'B23009:With own children of the householder under 18 years:Married-couple family:3 or more workers:',
+        'B23009:With own children of the householder under 18 years:Other family:Unmarried householder:No workers',
+        'B23009:With own children of the householder under 18 years:Other family:Unmarried householder:1 worker',
+        'B23009:With own children of the householder under 18 years:Other family:Unmarried householder:2 workers',
+        'B23009:With own children of the householder under 18 years:Other family:Unmarried householder:3 or more workers',
+        'B23009:No own children of the householder under 18 years:Married-couple family:No workers',
+        'B23009:No own children of the householder under 18 years:Married-couple family:1 worker',
+        'B23009:No own children of the householder under 18 years:Married-couple family:2 workers:',
+        'B23009:No own children of the householder under 18 years:Married-couple family:3 or more workers:',
+        'B23009:No own children of the householder under 18 years:Other family:Unmarried householder:No workers',
+        'B23009:No own children of the householder under 18 years:Other family:Unmarried householder:1 worker',
+        'B23009:No own children of the householder under 18 years:Other family:Unmarried householder:2 workers',
+        'B23009:No own children of the householder under 18 years:Other family:Unmarried householder:3 or more workers',
+        # "related" covers almost all children in households:
+        'B11004:Married-couple family:With related children of the householder under 18 years:Under 6 years only',
+        'B11004:Married-couple family:With related children of the householder under 18 years:Under 6 years and 6 to 17 years',
+        'B11004:Married-couple family:With related children of the householder under 18 years:6 to 17 years only',
+        'B11004:Married-couple family:No related children of the householder under 18 years',
+        'B11004:Other family:Unmarried householder:With related children of the householder under 18 years:Under 6 years only',
+        'B11004:Other family:Unmarried householder:With related children of the householder under 18 years:Under 6 years and 6 to 17 years',
+        'B11004:Other family:Unmarried householder:With related children of the householder under 18 years:6 to 17 years only',
+        'B11004:Other family:Unmarried householder:No related children of the householder under 18 years',
+        ## covers unmarried partners and married-couple families:
+        'B11012:Two-partner household:With children of the householder under 18 years',
+        'B11012:Two-partner household:With no children of the householder under 18 years',
+        ## various types of non-partner households:
+        f'B11012:Single householder:{B11012_lst[12]}',
+        f'B11012:Single householder:{B11012_lst[13]}',
+        f'B11012:Single householder:{B11012_lst[14]}',
+        f'B11012:Single householder:{B11012_lst[15]}',
+        'B09018:',
+        'B09018:Grandchild',
+        ## covers all adults in households:
+        'B09021:18 to 34 years:Lives alone',
+        'B09021:18 to 34 years:Householder living with partner or partner of householder',
+        'B09021:18 to 34 years:Child of householder',
+        'B09021:18 to 34 years:Other relatives',
+        'B09021:18 to 34 years:Other nonrelatives',
+        'B09021:35 to 64 years:Lives alone',
+        'B09021:35 to 64 years:Householder living with partner or partner of householder',
+        'B09021:35 to 64 years:Child of householder',
+        'B09021:35 to 64 years:Other relatives',
+        'B09021:35 to 64 years:Other nonrelatives',
+        'B09021:65 years and over:Lives alone',
+        'B09021:65 years and over:Householder living with partner or partner of householder',
+        'B09021:65 years and over:Other relatives',
+        'B09021:65 years and over:Other nonrelatives',
+            *['B19001:'+k for k in inc_cats],
+        'B22010:Household received Food Stamps/SNAP in the past 12 months:',
+        *['C24030:'+k for k in ind_codes.keys()],
+        "B25006:Householder who is Black or African American alone",
+        "B11001H:Householder white non-hispanic",
+        "B11001I:Householder hispanic any race"
         ]
 
-        # Geos and commute states
-        geos = d.get("geos", None)
-        if geos is not None:
-            geos = [str(x) for x in geos]
-        commute_states = d.get("commute_states", None)
-        if commute_states is not None:
-            commute_states = [str(x).zfill(2) for x in commute_states]
+    # Generated sample columns that match each of target_columns, in the same order
+    # (generated in read_psamp and read_hsamp)
+    sample_columns = ['fam_hh_2', 'fam_hh_3', 'fam_hh_4', 'fam_hh_5', 'fam_hh_6', 'fam_hh_7o', 
+        'non_fam_hh_1', 'non_fam_hh_2', 'non_fam_hh_3', 'non_fam_hh_4', 'non_fam_hh_5', 'non_fam_hh_6', 'non_fam_hh_7o', 
+        'w_own_ch_u18_married_fam_work0', 
+        'w_own_ch_u18_married_fam_work1',
+        'w_own_ch_u18_married_fam_work2',
+        'w_own_ch_u18_married_fam_work3o',
+        'w_own_ch_u18_unmar_fam_work0', 
+        'w_own_ch_u18_unmar_fam_work1',
+        'w_own_ch_u18_unmar_fam_work2',
+        'w_own_ch_u18_unmar_fam_work3o',
+        'no_own_ch_u18_married_fam_work0',
+        'no_own_ch_u18_married_fam_work1',
+        'no_own_ch_u18_married_fam_work2',
+        'no_own_ch_u18_married_fam_work3o',
+        'no_own_ch_u18_unmar_fam_work0',
+        'no_own_ch_u18_unmar_fam_work1',
+        'no_own_ch_u18_unmar_fam_work2',
+        'no_own_ch_u18_unmar_fam_work3o',
+        'fam_married_w_rel_ch_u6_only',
+        'fam_married_w_rel_ch_u6_and_6_17', 
+        'fam_married_w_rel_ch_6_17_only',
+        'fam_married_no_rel_ch_u18',
+        'fam_unmar_w_rel_ch_u6_only', 
+        'fam_unmar_w_rel_ch_u6_and_6_17', 
+        'fam_unmar_w_rel_ch_6_17_only',
+        'fam_unmar_no_rel_ch_u18',
+        'partner_hh_ch_u18', 
+        'partner_hh_no_ch_u18', 
+        'hh_alone',
+        'hh_single_ch_u18', 
+        'hh_single_other_rel', 
+        'hh_nonrel_only',
+        'ch_u18_in_hh',
+        'grandch_u18',
+        'age_18_34_alone',
+        'age_18_34_partner', 
+        'age_18_34_child_of_hh',
+        'age_18_34_other_rel', 
+        'age_18_34_non_rel', 	   
+        'age_35_64_alone', 
+        'age_35_64_partner', 
+        'age_35_64_child_of_hh',
+        'age_35_64_other_rel', 
+        'age_35_64_non_rel', 
+        'age_65o_alone',
+        'age_65o_partner', 
+        'age_65o_other_rel',
+        'age_65o_non_rel',
+        *inc_cats,
+        'snap',
+        *['ind_'+k for k in ind_codes.keys()],
+        'hh_race_black_alone',
+        'hh_white_non_hispanic',
+        'hh_hispanic'
+        ]
 
-        self.geos = geos
-        self.commute_states = commute_states
-        self.main_year = d.get("main_year", None)
+    # Derived lists of keys
+    ind_keys = list(ind_codes.keys())
 
-        # ADJINC and income categories
-        self.ADJINC = d.get("inc_adj", 1.010145)
-        self.inc_cats = d.get("inc_cats", self.inc_cats_def)
-        self.inc_cols = d.get("inc_cols", self.inc_cols_def)
-        self.LODES_cutoff = d.get("LODES_annual_income_boundary", 40000)
+    # Ensure output directory exists and save codes for workplace generation
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
+    with open(os.path.join(PROCESSED_DIR, 'codes.json'), 'w') as f:
+        json.dump({'ind_codes': ind_keys, 'occ_codes': list(occ_codes.keys())}, f)
 
-        # Additional traits to include in p_samples summary
-        self.more_summary_cols = d.get(
-            "additional_traits",
-            ['sch_public', 'sch_private', 'female',
-             'race_white_alone', 'race_black_alone', 'race_amerindian_or_alaskan',
-             'race_asian_alone', 'race_pacific_alone', 'race_other_alone',
-             'race_two_or_more', 'hispanic'],
-        )
+    _log("")
+    _log("============================================================")
+    _log("Running process_data()")
+    _log("============================================================")
 
-        # Make a list of column names for B11012. Wording is different in 2019 and 2020.
-        B11012 = read_acs('B11012', self.geos)
-        B11012_lst = [col.split(':')[2] for col in B11012.columns if len(col.split(':')) > 2]
+    # --- generate_samples ---
+    _log("*** generate_samples() ***")
+    _log("-- Generating PUMS samples")
+    p_summary = generate_samples(
+        sample_columns,
+        ADJINC,
+        inc_cats,
+        inc_cols,
+        LODES_cutoff,
+        ind_codes,
+        occ_codes,
+        more_summary_cols,
+    )
+    _log("-- processed/census_samples.csv")
+    _log("-- processed/samp_geo.csv")
+    _log("-- processed/hh_samples.csv")
+    _log("-- processed/p_samples.csv")
 
-        # Target columns to match in synth pop
-        # (read from census or generated in generate_targets())
-        self.target_columns = ['B11016:Family households:2-person household',
-            'B11016:Family households:3-person household',
-            'B11016:Family households:4-person household',
-            'B11016:Family households:5-person household',
-            'B11016:Family households:6-person household',
-            'B11016:Family households:7-or-more person household',
-            'B11016:Nonfamily households:1-person household',
-            'B11016:Nonfamily households:2-person household',
-            'B11016:Nonfamily households:3-person household',
-            'B11016:Nonfamily households:4-person household',
-            'B11016:Nonfamily households:5-person household',
-            'B11016:Nonfamily households:6-person household',
-            'B11016:Nonfamily households:7-or-more person household',
-            ## covers distribution of workers per household reasonably well:
-            'B23009:With own children of the householder under 18 years:Married-couple family:No workers',
-            'B23009:With own children of the householder under 18 years:Married-couple family:1 worker',
-            'B23009:With own children of the householder under 18 years:Married-couple family:2 workers:',
-            'B23009:With own children of the householder under 18 years:Married-couple family:3 or more workers:',
-            'B23009:With own children of the householder under 18 years:Other family:Unmarried householder:No workers',
-            'B23009:With own children of the householder under 18 years:Other family:Unmarried householder:1 worker',
-            'B23009:With own children of the householder under 18 years:Other family:Unmarried householder:2 workers',
-            'B23009:With own children of the householder under 18 years:Other family:Unmarried householder:3 or more workers',
-            'B23009:No own children of the householder under 18 years:Married-couple family:No workers',
-            'B23009:No own children of the householder under 18 years:Married-couple family:1 worker',
-            'B23009:No own children of the householder under 18 years:Married-couple family:2 workers:',
-            'B23009:No own children of the householder under 18 years:Married-couple family:3 or more workers:',
-            'B23009:No own children of the householder under 18 years:Other family:Unmarried householder:No workers',
-            'B23009:No own children of the householder under 18 years:Other family:Unmarried householder:1 worker',
-            'B23009:No own children of the householder under 18 years:Other family:Unmarried householder:2 workers',
-            'B23009:No own children of the householder under 18 years:Other family:Unmarried householder:3 or more workers',
-            # "related" covers almost all children in households:
-            'B11004:Married-couple family:With related children of the householder under 18 years:Under 6 years only',
-            'B11004:Married-couple family:With related children of the householder under 18 years:Under 6 years and 6 to 17 years',
-            'B11004:Married-couple family:With related children of the householder under 18 years:6 to 17 years only',
-            'B11004:Married-couple family:No related children of the householder under 18 years',
-            'B11004:Other family:Unmarried householder:With related children of the householder under 18 years:Under 6 years only',
-            'B11004:Other family:Unmarried householder:With related children of the householder under 18 years:Under 6 years and 6 to 17 years',
-            'B11004:Other family:Unmarried householder:With related children of the householder under 18 years:6 to 17 years only',
-            'B11004:Other family:Unmarried householder:No related children of the householder under 18 years',
-            ## covers unmarried partners and married-couple families:
-            'B11012:Two-partner household:With children of the householder under 18 years',
-            'B11012:Two-partner household:With no children of the householder under 18 years',
-            ## various types of non-partner households:
-            f'B11012:Single householder:{B11012_lst[12]}',
-            f'B11012:Single householder:{B11012_lst[13]}',
-            f'B11012:Single householder:{B11012_lst[14]}',
-            f'B11012:Single householder:{B11012_lst[15]}',
-            'B09018:',
-            'B09018:Grandchild',
-            ## covers all adults in households:
-            'B09021:18 to 34 years:Lives alone',
-            'B09021:18 to 34 years:Householder living with partner or partner of householder',
-            'B09021:18 to 34 years:Child of householder',
-            'B09021:18 to 34 years:Other relatives',
-            'B09021:18 to 34 years:Other nonrelatives',
-            'B09021:35 to 64 years:Lives alone',
-            'B09021:35 to 64 years:Householder living with partner or partner of householder',
-            'B09021:35 to 64 years:Child of householder',
-            'B09021:35 to 64 years:Other relatives',
-            'B09021:35 to 64 years:Other nonrelatives',
-            'B09021:65 years and over:Lives alone',
-            'B09021:65 years and over:Householder living with partner or partner of householder',
-            'B09021:65 years and over:Other relatives',
-            'B09021:65 years and over:Other nonrelatives',
-                *['B19001:'+k for k in self.inc_cats],
-            'B22010:Household received Food Stamps/SNAP in the past 12 months:',
-            *['C24030:'+k for k in self.ind_codes.keys()],
-            "B25006:Householder who is Black or African American alone",
-            "B11001H:Householder white non-hispanic",
-            "B11001I:Householder hispanic any race"
-            ]
+    # --- generate_gq ---
+    _log("\n*** generate_gq() ***")
+    _log("-- Generating group quarters data")
+    if geos is None:
+        raise ValueError("geos is not defined in config; cannot generate group quarters data.")
+    adults_hh_cbg = read_acs('B09021', geos)[['B09021:']]
+    cbg_index = adults_hh_cbg.index
+    geo_xwalk = read_geo_xwalk(cbg_index)
+    gq_stats = generate_gq(
+        geos,
+        adults_hh_cbg,
+        geo_xwalk,
+        p_summary,
+        ind_codes,
+        occ_codes,
+    )
+    _log("-- processed/group_quarters.csv")
 
-        # Generated sample columns that match each of target_columns, in the same order
-        # (generated in read_psamp and read_hsamp)
-        self.sample_columns = ['fam_hh_2', 'fam_hh_3', 'fam_hh_4', 'fam_hh_5', 'fam_hh_6', 'fam_hh_7o', 
-            'non_fam_hh_1', 'non_fam_hh_2', 'non_fam_hh_3', 'non_fam_hh_4', 'non_fam_hh_5', 'non_fam_hh_6', 'non_fam_hh_7o', 
-            'w_own_ch_u18_married_fam_work0', 
-            'w_own_ch_u18_married_fam_work1',
-            'w_own_ch_u18_married_fam_work2',
-            'w_own_ch_u18_married_fam_work3o',
-            'w_own_ch_u18_unmar_fam_work0', 
-            'w_own_ch_u18_unmar_fam_work1',
-            'w_own_ch_u18_unmar_fam_work2',
-            'w_own_ch_u18_unmar_fam_work3o',
-            'no_own_ch_u18_married_fam_work0',
-            'no_own_ch_u18_married_fam_work1',
-            'no_own_ch_u18_married_fam_work2',
-            'no_own_ch_u18_married_fam_work3o',
-            'no_own_ch_u18_unmar_fam_work0',
-            'no_own_ch_u18_unmar_fam_work1',
-            'no_own_ch_u18_unmar_fam_work2',
-            'no_own_ch_u18_unmar_fam_work3o',
-            'fam_married_w_rel_ch_u6_only',
-            'fam_married_w_rel_ch_u6_and_6_17', 
-            'fam_married_w_rel_ch_6_17_only',
-            'fam_married_no_rel_ch_u18',
-            'fam_unmar_w_rel_ch_u6_only', 
-            'fam_unmar_w_rel_ch_u6_and_6_17', 
-            'fam_unmar_w_rel_ch_6_17_only',
-            'fam_unmar_no_rel_ch_u18',
-            'partner_hh_ch_u18', 
-            'partner_hh_no_ch_u18', 
-            'hh_alone',
-            'hh_single_ch_u18', 
-            'hh_single_other_rel', 
-            'hh_nonrel_only',
-            'ch_u18_in_hh',
-            'grandch_u18',
-            'age_18_34_alone',
-            'age_18_34_partner', 
-            'age_18_34_child_of_hh',
-            'age_18_34_other_rel', 
-            'age_18_34_non_rel', 	   
-            'age_35_64_alone', 
-            'age_35_64_partner', 
-            'age_35_64_child_of_hh',
-            'age_35_64_other_rel', 
-            'age_35_64_non_rel', 
-            'age_65o_alone',
-            'age_65o_partner', 
-            'age_65o_other_rel',
-            'age_65o_non_rel',
-            *self.inc_cats,
-            'snap',
-            *['ind_'+k for k in self.ind_codes.keys()],
-            'hh_race_black_alone',
-            'hh_white_non_hispanic',
-            'hh_hispanic'
-            ]
+    # --- generate_targets ---
+    _log("\n*** generate_targets() ***")
+    _log("-- Generating census targets")
+    if geos is None:
+        raise ValueError("geos is not defined in config; cannot generate targets.")
+    generate_targets(
+        target_columns,
+        geos,
+        geo_xwalk,
+        gq_stats,
+        inc_cats,
+        inc_cols,
+        ind_codes,
+        occ_codes,
+    )
+    _log("-- processed/hh_counts.csv")
+    _log("-- processed/acs_targets.csv")
+    _log("-- processed/cbg_geo.csv")
 
-        # Derived lists of keys
-        self.ind_keys = list(self.ind_codes.keys())
+    # --- calc_commute_marginals ---
+    _log("\n*** calc_commute_marginals() ***")
+    _log("-- Generating commute marginals")
+    if geos is None:
+        raise ValueError("geos is not defined in config; cannot calculate commute marginals.")
+    calc_commute_marginals(
+        geos,
+        ind_codes,
+        ind_keys,
+        commute_states,
+    )
+    _log("-- processed/work_cats_live_outside.csv")
+    _log("-- processed/work_od_prop.csv")
+    _log("-- processed/work_io_sums.csv")
+    _log("-- processed/work_id_est_sums.csv")
 
-        # Ensure output directory exists and save codes for workplace generation
-        os.makedirs(PROCESSED_DIR,exist_ok=True)
-        with open(os.path.join(PROCESSED_DIR,'codes.json'), 'w') as f:
-            json.dump({'ind_codes': self.ind_keys, 'occ_codes': list(self.occ_codes.keys())}, f)
+    # --- generate_work_sizes ---
+    _log("\n*** generate_work_sizes() ***")
+    _log("-- Generating employer sizes")
+    generate_work_sizes()
+    _log("-- processed/work_sizes.csv")
 
-        # Placeholders for intermediate results when running step-by-step
-        self.p_summary = None
-        self.adults_hh_cbg = None
-        self.geo_xwalk = None
-        self.gq_stats = None
+    # --- generate_schools ---
+    _log("\n*** generate_schools() ***")
+    _log("-- Generating school data")
+    if geos is None or main_year is None:
+        raise ValueError("geos or main_year not defined in config; cannot generate schools.")
+    generate_schools(geos, main_year)
+    _log("-- processed/schools.csv")
+    _log("-- processed/cbg_sch_distmat.csv")
 
-    def generate_samples(self):
-        """Run the sample generation step and cache the summary."""
-        self._log("*** Running ProcessData.generate_samples() ***")
-        self._log("-- Generating PUMS samples")
-        self.p_summary = generate_samples(
-            self.sample_columns,
-            self.ADJINC,
-            self.inc_cats,
-            self.inc_cols,
-            self.LODES_cutoff,
-            self.ind_codes,
-            self.occ_codes,
-            self.more_summary_cols,
-        )
-        self._log("-- processed/census_samples.csv")
-        self._log("-- processed/samp_geo.csv")
-        self._log("-- processed/hh_samples.csv")
-        self._log("-- processed/p_samples.csv")
-        return self.p_summary
+    _log("")
+    _log("All process_data() steps complete")
 
-    def generate_gq(self):
-        """Run the group quarters generation step and cache intermediate data."""
-        self._log("\n*** Running ProcessData.generate_gq() ***")
-        self._log("-- Generating group quarters data")
-        if self.geos is None:
-            raise ValueError("geos is not defined in config; cannot generate group quarters data.")
-        if self.p_summary is None:
-            raise RuntimeError("p_summary is not available. Call generate_samples() first.")
+    return config
 
-        self.adults_hh_cbg = read_acs('B09021', self.geos)[['B09021:']]
-        cbg_index = self.adults_hh_cbg.index
-        self.geo_xwalk = read_geo_xwalk(cbg_index)
-        self.gq_stats = generate_gq(
-            self.geos,
-            self.adults_hh_cbg,
-            self.geo_xwalk,
-            self.p_summary,
-            self.ind_codes,
-            self.occ_codes,
-        )
-        self._log("-- processed/group_quarters.csv")
-        return self.gq_stats
 
-    def generate_targets(self):
-        """Run the target generation step."""
-        self._log("\n*** Running ProcessData.generate_targets() ***")
-        self._log("-- Generating census targets")
-        if self.geos is None:
-            raise ValueError("geos is not defined in config; cannot generate targets.")
-        if self.geo_xwalk is None or self.gq_stats is None:
-            raise RuntimeError("geo_xwalk or gq_stats not available. Call generate_gq() first.")
+def quality_check(config, base_dir=None, auto_print=True, verbose=1):
+    """Run processed geography alignment checks and optionally print a summary.
 
-        generate_targets(
-            self.target_columns,
-            self.geos,
-            self.geo_xwalk,
-            self.gq_stats,
-            self.inc_cats,
-            self.inc_cols,
-            self.ind_codes,
-            self.occ_codes,
-        )
-        self._log("-- processed/hh_counts.csv")
-        self._log("-- processed/acs_targets.csv")
-        self._log("-- processed/cbg_geo.csv")
+    The printed summary includes:
+    - `data_dir`: the root data folder (from `config["path"]`) whose `processed/`
+      subdirectory is being checked.
+    - `st_puma_overlap`: how many unique PUMAs appear in the target CBG geography
+      (`target_unique_pumas`), how many appear in the PUMS sample pool
+      (`sample_unique_pumas`), how many target PUMAs are covered by the sample pool
+      (`covered_target_pumas`), and the resulting coverage fraction (`overlap_pct`).
+    - `samp_geo_missingness` / `target_geo_missingness`:, for each key geography
+      field (`st_puma`, `county`, `cbsa`, `R`, `U`), the count and fraction of
+      missing values in the PUMS-side (`samp_geo.csv`) and CBG-side (`cbg_geo.csv`)
+      tables.
+    - `co_readiness_summary`: a coarse status flag (`good` / `warn`) plus notes
+      if PUMA coverage is low or missingness in key fields is high.
 
-    def calc_commute_marginals(self):
-        """Run the commute marginals calculation step."""
-        self._log("\n*** Running ProcessData.calc_commute_marginals() ***")
-        self._log("-- Generating commute marginals")
-        if self.geos is None:
-            raise ValueError("geos is not defined in config; cannot calculate commute marginals.")
-
-        calc_commute_marginals(
-            self.geos,
-            self.ind_codes,
-            self.ind_keys,
-            self.commute_states,
-        )
-        self._log("-- processed/work_cats_live_outside.csv")
-        self._log("-- processed/work_od_prop.csv")
-        self._log("-- processed/work_io_sums.csv")
-        self._log("-- processed/work_id_est_sums.csv")
-
-    def generate_work_sizes(self):
-        """Run the workplace size generation step."""
-        self._log("\n*** Running ProcessData.generate_work_sizes() ***")
-        self._log("-- Generating employer sizes")
-        generate_work_sizes()
-        self._log("-- processed/work_sizes.csv")
-
-    def generate_schools(self):
-        """Run the school processing step."""
-        self._log("\n*** Running ProcessData.generate_schools() ***")
-        self._log("-- Generating school data")
-        if self.geos is None or self.main_year is None:
-            raise ValueError("geos or main_year not defined in config; cannot generate schools.")
-        generate_schools(self.geos, self.main_year)
-        self._log("-- processed/schools.csv")
-        self._log("-- processed/cbg_sch_distmat.csv")
-
-    def run_all(self):
-        """Run the full census processing pipeline."""
-        self._log("")
-        self._log("============================================================")
-        self._log("Running ProcessData()")
-        self._log("============================================================")
-        self.generate_samples()
-        self.generate_gq()
-        self.generate_targets()
-        self.calc_commute_marginals()
-        self.generate_work_sizes()
-        self.generate_schools()
-        self._log("")
-        self._log("All ProcessData() steps complete")
-    
-    def quality_check(self, *, auto_print=True):
-        """Run processed geography alignment checks and optionally print a summary.
-
-        The printed summary includes:
-        - `data_dir`: the root data folder (from `config["path"]`) whose `processed/`
-          subdirectory is being checked.
-        - `st_puma_overlap`: how many unique PUMAs appear in the target CBG geography
-          (`target_unique_pumas`), how many appear in the PUMS sample pool
-          (`sample_unique_pumas`), how many target PUMAs are covered by the sample pool
-          (`covered_target_pumas`), and the resulting coverage fraction (`overlap_pct`).
-        - `samp_geo_missingness` / `target_geo_missingness`:, for each key geography
-          field (`st_puma`, `county`, `cbsa`, `R`, `U`), the count and fraction of
-          missing values in the PUMS-side (`samp_geo.csv`) and CBG-side (`cbg_geo.csv`)
-          tables.
-        - `co_readiness_summary`: a coarse status flag (`good` / `warn`) plus notes
-          if PUMA coverage is low or missingness in key fields is high.
-
-        This intentionally reads from `${config['path']}/processed/*` so it works
-        after `auto_run=True` as well.
-        """
-        self._log("\n*** Running ProcessData.quality_check() ***")
-        qc = QualityCheck(config_dict=self.config, base_dir=self.base_dir, auto_run=False)
-        qc._results = qc.run_all()  # ensure we return the same object we print
-        if auto_print:
-            qc.print_results()
-        return qc._results
+    This intentionally reads from `${config['path']}/processed/*` so it works
+    after process_data() as well. QualityCheck itself remains a class for now.
+    """
+    if verbose:
+        print("\n*** Running quality_check() ***")
+    qc = QualityCheck(config_dict=config, base_dir=base_dir, auto_run=False)
+    qc._results = qc.run_all()  # ensure we return the same object we print
+    if auto_print:
+        qc.print_results()
+    return qc._results
 
 def _missingness_summary(df, cols):
     total = len(df)
@@ -2186,8 +2146,8 @@ class QualityCheck:
             print(f"  - {note}")
 
 def main():
-    runner = ProcessData(auto_run=False)
-    runner.run_all()
+    config = load_config(BASE_DIR)
+    process_data(config)
 
 
 

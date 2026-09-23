@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import os
 from scipy import sparse
-from .utils import tryJSON, lrRound, lrRound_matrix, rowRound, drawCounts, vecmerge
+from .utils import tryJSON, resolve_config, lrRound, lrRound_matrix, rowRound, drawCounts, vecmerge
 from .ipfn import ipfn as IPFN
 
 
@@ -397,13 +397,14 @@ def generate_commute_matrices(data_dir):
         df.to_csv(os.path.join(proc_dir, f'od_{k}.csv.gz'), index=False, compression='gzip')
 
 
-def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_dir, random_seed=None):
+def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_dir,
+                              random_seed=None, config=None):
     """Generate workplaces and assign workers.
     Returns (company_workers, sch_workers, gq_workers, outside_workers, dummies).
     Each *_workers is dict[key -> list[worker_tuple]].
     """
     rng = np.random.default_rng(random_seed)
-    config = tryJSON(os.path.join(data_dir, 'config.json'))
+    config = resolve_config(config, data_dir)
     wp_codes = tryJSON(os.path.join(data_dir, 'processed', 'codes.json'))
     ind_codes = wp_codes.get('ind_codes', [])
     ind_idxs = {k: i + 1 for i, k in enumerate(ind_codes)}

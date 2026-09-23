@@ -6,6 +6,11 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Optional
 import json
+import os
+import warnings
+
+# Package directory (src/geopops/), where the shipped config.json template lives.
+PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def tryJSON(filename):
@@ -16,8 +21,97 @@ def tryJSON(filename):
         return {}
 
 
-@dataclass
+def resolve_config(config, data_dir):
+    """Use the in-memory config when given; otherwise read data_dir/config.json.
+
+    Pipeline stages take a `config` argument so that the config resolved once at
+    the entry point is the one every stage actually uses. The disk path below is
+    only reached when a stage is called directly against an already-generated
+    population.
+
+    If the data-dir config is missing or unparseable, fall back to the package
+    config and say so. Silence here is dangerous: every caller reads values as
+    `config.get(key, <hardcoded default>)`, so an empty dict means the run
+    quietly uses source-code literals instead of the user's settings, completes
+    normally, and produces plausible-looking wrong numbers.
+    """
+    if config is not None:
+        return config
+
+    data_cfg_path = os.path.join(data_dir, 'config.json')
+    cfg = tryJSON(data_cfg_path)
+    if cfg:
+        return cfg
+
+    reason = "is missing" if not os.path.exists(data_cfg_path) else "could not be read"
+    pkg_cfg_path = os.path.join(PACKAGE_DIR, 'config.json')
+    pkg_cfg = tryJSON(pkg_cfg_path)
+    if pkg_cfg:
+        warnings.warn(
+            f"Config {data_cfg_path!r} {reason}; falling back to the package "
+            f"config {pkg_cfg_path!r}. These can describe different populations "
+            f"-- pass config= explicitly to control which one is used.",
+            stacklevel=2,
+        )
+        return pkg_cfg
+
+    warnings.warn(
+        f"Config {data_cfg_path!r} {reason} and the package config "
+        f"{pkg_cfg_path!r} is unavailable; falling back to built-in defaults, "
+        f"which probably do not match your run.",
+        stacklevel=2,
+    )
+    return {}
+
+
+class TraitSchema:
+    """Shared name -> position mapping for the per-person traits of one run.
+
+    One instance is shared by every PersonData in a population, so carrying
+    config-driven traits costs a tuple of values per person rather than a set of
+    named fields. Keeping the trait list config-driven also means adding a trait
+    needs no code change -- the previous hardcoded field list meant a trait in
+    the config that PersonData didn't declare died with an opaque TypeError.
+    """
+    __slots__ = ("names", "index")
+
+    def __init__(self, names=()):
+        self.names = tuple(names)
+        self.index = {name: i for i, name in enumerate(self.names)}
+
+    def values_from(self, mapping):
+        """Build a trait-value tuple from a name -> value mapping."""
+        return tuple(mapping.get(name) for name in self.names)
+
+    def __len__(self):
+        return len(self.names)
+
+    def __eq__(self, other):
+        return isinstance(other, TraitSchema) and self.names == other.names
+
+    def __hash__(self):
+        return hash(self.names)
+
+    def __repr__(self):
+        return f"TraitSchema({list(self.names)!r})"
+
+
+EMPTY_SCHEMA = TraitSchema()
+
+
+@dataclass(slots=True)
 class PersonData:
+    """One synthetic person.
+
+    The core demographic fields are fixed. Everything in the config's
+    ``additional_traits`` (sex, race/ethnicity, school sector, ...) is carried in
+    ``trait_values``, positioned by a TraitSchema shared across the whole
+    population, and is still reachable by name: ``person.hispanic`` works
+    whenever ``hispanic`` was requested for this run.
+
+    Memory matters here -- one instance exists per person, so hundreds of
+    thousands per county. ``slots=True`` removes each instance's ``__dict__``.
+    """
     hh: tuple
     sample: int
     age: int
@@ -26,17 +120,29 @@ class PersonData:
     com_cat: Optional[int] = None
     com_inc: Optional[int] = None
     sch_grade: Optional[str] = None
-    sch_public: Optional[bool] = None
-    sch_private: Optional[bool] = None
-    female: Optional[bool] = None
-    race_white_alone: Optional[bool] = None
-    race_black_alone: Optional[bool] = None
-    race_amerindian_or_alaskan: Optional[bool] = None
-    race_asian_alone: Optional[bool] = None
-    race_pacific_alone: Optional[bool] = None
-    race_other_alone: Optional[bool] = None
-    race_two_or_more: Optional[bool] = None
-    hispanic: Optional[bool] = None
+    schema: "TraitSchema" = EMPTY_SCHEMA
+    trait_values: tuple = ()
+
+    def __getattr__(self, name):
+        # Only reached when normal slot lookup fails, so this can never shadow a
+        # real field. object.__getattribute__ avoids recursing back through here.
+        try:
+            schema = object.__getattribute__(self, "schema")
+            values = object.__getattribute__(self, "trait_values")
+        except AttributeError:
+            raise AttributeError(name) from None
+        position = schema.index.get(name)
+        if position is None or position >= len(values):
+            raise AttributeError(
+                f"PersonData has no field or trait {name!r}. "
+                f"Traits available for this run: {list(schema.names)}"
+            )
+        return values[position]
+
+    @property
+    def traits(self):
+        """The person's config-driven traits as a {name: value} dict."""
+        return dict(zip(self.schema.names, self.trait_values))
 
 
 @dataclass

@@ -1,5 +1,5 @@
 """
-GeneratePop orchestrator class — pure-Python replacement for RunJulia.
+Population orchestrator class — pure-Python replacement for RunJulia.
 Calls co, households, schools, workplaces, networks, and export modules.
 """
 import os
@@ -7,28 +7,29 @@ import json
 import numpy as np
 from collections import defaultdict
 from . import co, households, schools, workplaces, networks, export
+# One loader for the whole package: config.json with config.local.json layered
+# over it. This module used to define its own, which read config.json alone --
+# so Population saw the sanitized template while download_data and process_data
+# saw the local overlay.
+from .write_config import load_config
 
 # Package directory (src/geopops/) where config.json lives
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def load_config(base_dir=None):
-    cfg_dir = base_dir if base_dir is not None else PACKAGE_DIR
-    config_path = os.path.join(cfg_dir, "config.json")
-    with open(config_path, "r") as f:
-        return json.load(f)
+class Population:
+    """A synthetic population and the pipeline that builds it.
 
-
-class GeneratePop:
-    """Orchestrates the synthetic population pipeline in pure Python.
-    Same API as RunJulia: CO(), SynthPop(), Export(), run_all().
+    Stages, in order: run_co(), synth_pop(), export(). Constructing a Population
+    runs nothing; call the stages yourself, or use generate_pop() to run all
+    three and get the finished object back.
     """
 
-    def __init__(self, config_dict=None, base_dir=None, output_dir=None,
-                 random_seed=None, verbose=1, auto_run=False, run_all=None):
+    def __init__(self, config=None, base_dir=None, output_dir=None,
+                 random_seed=None, verbose=1):
         self.verbose = verbose
         self.base_dir = base_dir if base_dir is not None else PACKAGE_DIR
-        config = config_dict if config_dict is not None else load_config(self.base_dir)
+        config = config if config is not None else load_config(self.base_dir)
         if output_dir is not None:
             self.data_dir = output_dir
         else:
@@ -60,11 +61,6 @@ class GeneratePop:
         self.adj_dummy_keys = None
         self.adj_out_workers = None
 
-        if run_all is not None:
-            auto_run = run_all
-        if auto_run:
-            self.run_all()
-
     def _log(self, msg):
         if self.verbose:
             print(msg)
@@ -87,11 +83,12 @@ class GeneratePop:
             for i, k in enumerate(labels)
         }
 
-    def CO(self):
+    def run_co(self):
         """Run combinatorial optimization."""
-        self._log("*** Running GeneratePop.CO() ***")
+        self._log("*** Running Population.run_co() ***")
         self.co_results, self.co_scores = co.process_counties(
-            self.data_dir, random_seed=self._stage_random_seeds["co"])
+            self.data_dir, random_seed=self._stage_random_seeds["co"],
+            config=self.config)
 
     def _county_from_cbg_idx(self, cbg_idx):
         cbg_code = self._cbg_by_idx.get(cbg_idx)
@@ -186,12 +183,12 @@ class GeneratePop:
         self._log(f"-- GQ network (Small-world, mean degree={gq_k}, rewiring probability={rewiring})")
         self._log("-- Household network (Each household is a complete graph)")
 
-    def SynthPop(self):
+    def synth_pop(self):
         """Generate synthetic population (households, schools, workplaces, networks)."""
         if self.co_results is None:
-            raise RuntimeError("CO() must be run before SynthPop()")
+            raise RuntimeError("run_co() must be run before synth_pop()")
 
-        self._log("\n*** Running GeneratePop.SynthPop() ***")
+        self._log("\n*** Running Population.synth_pop() ***")
         self.cbgs, self.people, self.households, self.gqs, self.gq_summary = \
             households.generate_people(
                 self.co_results, self.data_dir, config=self.config,
@@ -204,7 +201,8 @@ class GeneratePop:
 
         self.sch_students = schools.generate_schools(
             self.people, self.cbgs, self.data_dir,
-            random_seed=self._stage_random_seeds["schools"])
+            random_seed=self._stage_random_seeds["schools"],
+            config=self.config)
         self._log("\nGenerating schools")
         self._log_school_summary()
 
@@ -222,7 +220,8 @@ class GeneratePop:
             workplaces.generate_jobs_and_workers(
                 self.people, self.cbgs, self.gqs,
                 self.co_results, self.gq_summary, self.data_dir,
-                random_seed=self._stage_random_seeds["workplaces"])
+                random_seed=self._stage_random_seeds["workplaces"],
+                config=self.config)
         self._log_workplace_summary()
 
         self._log("\nGenerating networks")
@@ -235,12 +234,12 @@ class GeneratePop:
                 self.outside_workers, self.dummies, self.config,
                 random_seed=self._stage_random_seeds["networks"])
 
-    def Export(self):
+    def export(self):
         """Export population and networks to CSV/MTX files."""
         if self.people is None:
-            raise RuntimeError("SynthPop() must be run before Export()")
+            raise RuntimeError("synth_pop() must be run before export()")
 
-        self._log("\n*** Running GeneratePop.Export() ***")
+        self._log("\n*** Running Population.export() ***")
         self._log("")
         export.export_synthpop(
             self.data_dir, self.cbgs, self.households, self.people,
@@ -253,13 +252,43 @@ class GeneratePop:
             self.adj_dummy_keys, self.adj_out_workers,
             verbose=self.verbose)
 
-    def run_all(self):
-        """Run the complete pipeline: CO -> SynthPop -> Export."""
+
+
+def generate_pop(config=None, base_dir=None, output_dir=None, random_seed=None,
+                 verbose=1):
+    """Generate a synthetic population: run_co, then synth_pop, then export.
+
+    Args:
+        config (dict, optional): Config dict, e.g. from write_config(). If not
+            provided, loads via load_config(base_dir).
+        base_dir (str, optional): Base directory to use for relative paths.
+            Defaults to this file's directory.
+        output_dir (str, optional): Where to write results. Defaults to
+            config["path"].
+        random_seed (int, optional): Master seed for the run. Defaults to
+            config["random_seed"].
+        verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+
+    Returns:
+        Population: the completed run, holding all pipeline intermediates
+        (people, households, gqs, sch_students, adj_hh, ...).
+
+    Example::
+
+        pop = geopops.generate_pop(cfg, random_seed=42)
+        pop.people, pop.households, pop.adj_hh
+    """
+    pop = Population(config=config, base_dir=base_dir,
+                     output_dir=output_dir, random_seed=random_seed,
+                     verbose=verbose)
+    if verbose:
         print("")
-        self._log("============================================================")
-        self._log("Running GeneratePop()")
-        self._log("============================================================")
-        self.CO()
-        self.SynthPop()
-        self.Export()
+        print("============================================================")
+        print("Running generate_pop()")
+        print("============================================================")
+    # The one place the stage order is written down.
+    pop.run_co()
+    pop.synth_pop()
+    pop.export()
+    return pop
 

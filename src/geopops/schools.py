@@ -5,7 +5,7 @@ Translated from julia/schools.jl.
 import numpy as np
 import pandas as pd
 import os
-from .utils import tryJSON
+from .utils import tryJSON, resolve_config
 
 
 def read_sch_cap(data_dir):
@@ -57,9 +57,9 @@ def _get_students_in_school(people, cbgs_inv):
     return result
 
 
-def generate_schools(people, cbgs, data_dir, random_seed=None):
+def generate_schools(people, cbgs, data_dir, random_seed=None, config=None):
     rng = np.random.default_rng(random_seed)
-    config = tryJSON(os.path.join(data_dir, 'config.json'))
+    config = resolve_config(config, data_dir)
     n_schools = config.get('n_closest_schools', 4)
     prob_closest = config.get('p_closest_school', 0.9)
 

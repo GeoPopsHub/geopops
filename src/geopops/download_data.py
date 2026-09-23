@@ -13,6 +13,7 @@ import lzma
 import platform
 import subprocess
 import shlex
+from .write_config import load_config
 
 # Disable SSL warnings for downloads with verify=False
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -245,25 +246,53 @@ def try_download_text(src, dst):
     
     return status
 
+# Connection-level failures where a retry is actually likely to help (as opposed to
+# e.g. an HTTPError from a bad status code, which a retry won't fix).
+_CONNECTION_ERRORS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+)
+
+
+def _explain_connection_error(what, retry_hint):
+    """Print a friendly explanation after a transient network failure.
+
+    Callers should call this in an `except _CONNECTION_ERRORS:` block and then
+    re-`raise`, so the original exception still surfaces (this only adds context).
+    """
+    print(
+        f"\n! Connection interrupted while downloading {what}. This can happen with "
+        f"slow or unstable connections, especially for large files. {retry_hint}"
+    )
+
+
 def get_census_metadata(name, vintage, type_="variables"):
     """Function for getting ACS and Decennial metadata from Census API
-    
+
     Args:
         name (str): The census dataset name (e.g., "acs/acs5", "dec/dhc", "dec/sf1")
         vintage (str): The year of the census data (e.g., "2020", "2019"). Comes from the config.json file
         type_ (str, optional): The type of metadata to retrieve. Defaults to "variables". Can be "variables" or "geography"
-    
+
     Returns:
         pandas.DataFrame: DataFrame containing the metadata with variables as rows and metadata fields as columns
     """
     url = f"https://api.census.gov/data/{vintage}/{name}/{type_}.json"
-    response = requests.get(url)
-    response.raise_for_status()
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+    except _CONNECTION_ERRORS:
+        _explain_connection_error(
+            "Census metadata",
+            "Try running geopops.download_data(steps=['census']) again.",
+        )
+        raise
     return pd.DataFrame(response.json()["variables"]).T.reset_index().rename(columns={"index": "name"})
 
 def get_census_data(name, vintage, vars, region, regionin, key):
     """Function for making a Census API call and getting the data. Works with all ACS years and Decennial years before 2020
-    
+
     Args:
         name (str): The census dataset name (e.g., "acs/acs5", "dec/sf1")
         vintage (str): The year of the census data (e.g., "2020", "2019")
@@ -271,13 +300,13 @@ def get_census_data(name, vintage, vars, region, regionin, key):
         region (str): The geographic level to retrieve data for (e.g., "block group:*")
         regionin (str): The geographic filter for the region (e.g., "state:24 county:*")
         key (str): The Census API key for authentication
-    
+
     Returns:
         pandas.DataFrame: DataFrame containing the census data with variables as columns and geographic units as rows
     """
     # Build the API URL
     base_url = f"https://api.census.gov/data/{vintage}/{name}"
-    
+
     # Prepare parameters
     params = {
         "get": ",".join(vars),
@@ -285,11 +314,18 @@ def get_census_data(name, vintage, vars, region, regionin, key):
         "in": regionin,
         "key": key
     }
-    
+
     # Make the request
-    response = requests.get(base_url, params=params)
-    response.raise_for_status()
-    
+    try:
+        response = requests.get(base_url, params=params)
+        response.raise_for_status()
+    except _CONNECTION_ERRORS:
+        _explain_connection_error(
+            "Census data",
+            "Try running geopops.download_data(steps=['census']) again.",
+        )
+        raise
+
     # Convert to DataFrame
     data = response.json()
     headers = data[0]
@@ -299,17 +335,24 @@ def get_census_data(name, vintage, vars, region, regionin, key):
 
 def get_new_dec_data(vintage, state_fips):
     """Function for getting 2020 Decennial data using the Census API
-    
+
     Args:
         vintage (str): The year of the decennial data (should be "2020")
         state_fips (str): The FIPS code for the state to retrieve data for
-    
+
     Returns:
         pandas.DataFrame: DataFrame containing the 2020 decennial data with variables as columns and geographic units as rows
     """
     base_url = f"https://api.census.gov/data/{vintage}/dec/dhc?get=group(P18)&ucgid=pseudo(0400000US{state_fips}$1500000)"
-    response = requests.get(base_url)
-    response.raise_for_status()
+    try:
+        response = requests.get(base_url)
+        response.raise_for_status()
+    except _CONNECTION_ERRORS:
+        _explain_connection_error(
+            "Decennial Census data",
+            "Try running geopops.download_data(steps=['census']) again.",
+        )
+        raise
     data = response.json()
     headers = data[0]
     rows = data[1:]
@@ -530,7 +573,7 @@ def pull_pums_data(states, year, verbose=1):
     printed_source_header = False
     pums_source_url = f"https://www2.census.gov/programs-surveys/acs/data/pums/{year}/5-Year/"
     if verbose:
-        print("\n*** Running DownloadData.pull_pums_data() ***")
+        print("\n*** pull_pums_data() ***")
     for state_i in states:
         
         urls_list = [url for state, url in file_urls if state == state_i]
@@ -632,7 +675,7 @@ def download_shapefiles(state_fips, year, verbose=1):
     for state_i in state_fips:
         
         if verbose:
-            print("\n*** Running DownloadData.download_shapefiles() ***")
+            print("\n*** download_shapefiles() ***")
         
         urls_list = [url for state, url in file_urls if state == state_i]
         
@@ -677,7 +720,7 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
     """
     printed_source_header = False
     if verbose:
-        print("\n*** Running DownloadData.pull_LODES() ***")
+        print("\n*** pull_LODES() ***")
     # Determine version based on year
     version = "LODES8" if year >= 2020 else "LODES7"
     
@@ -824,7 +867,7 @@ def download_cbp_data(verbose=1):
         Outputs data files in the work folder
     """
     if verbose:
-        print("\n*** Running DownloadData.download_cbp_data() ***")
+        print("\n*** download_cbp_data() ***")
     cbp_dir = os.path.join(OUTPUT_DIR, "work")
     os.makedirs(cbp_dir, exist_ok=True)
     
@@ -846,7 +889,7 @@ def download_ct_puma_crosswalk(main_year, verbose=1):
         Outputs data files in the geo folder
     """
     if verbose:
-        print("\n*** Running DownloadData.download_ct_puma_crosswalk() ***")
+        print("\n*** download_ct_puma_crosswalk() ***")
     geo_dir = os.path.join(OUTPUT_DIR, "geo")
     os.makedirs(geo_dir, exist_ok=True)
     
@@ -911,7 +954,7 @@ def geocorr_files(verbose=1):
         Outputs data files in the geo folder
     """
     if verbose:
-        print("\n*** Running DownloadData.geocorr_files() ***")
+        print("\n*** geocorr_files() ***")
 
     # Load main_year from config to decide which geocorr files to copy
     config_path = os.path.join(BASE_DIR, "config.json")
@@ -982,15 +1025,22 @@ def download_school_data(main_year, verbose=1):
     os.makedirs(school_dir, exist_ok=True)
     
     if verbose:
-        print("\n*** Running DownloadData.download_school_data() ***")
+        print("\n*** download_school_data() ***")
     
     # Download school location data
     # https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_2021.zip
     url = f"https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}.zip"
 
     # Download the zip file
-    response = requests.get(url, stream=True)
-    response.raise_for_status()  # Raise an exception for bad status codes
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()  # Raise an exception for bad status codes
+    except _CONNECTION_ERRORS:
+        _explain_connection_error(
+            "school location data",
+            "Try running geopops.download_data(steps=['school']) again.",
+        )
+        raise
 
     # Save the file directly to the school folder
     zip_filename = f"EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}.zip"
@@ -1089,8 +1139,15 @@ def download_school_data(main_year, verbose=1):
         zip_path = os.path.join(school_dir, filename)
         
         # print(f"Downloading {filename}...")
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
+        try:
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+        except _CONNECTION_ERRORS:
+            _explain_connection_error(
+                "school enrollment data",
+                "Try running geopops.download_data(steps=['school']) again.",
+            )
+            raise
         
         # Download the file (overwrite if exists)
         with open(zip_path, 'wb') as f:
@@ -1212,380 +1269,158 @@ def download_school_data(main_year, verbose=1):
             else:
                 print(f"Item {os.path.basename(item_to_delete)} not found")
 
-class DownloadData:
-    """Orchestrates data downloads using the existing functions in this module.
+def _main_state_fips_and_abbr(config):
+    """Derive main state FIPS codes and abbreviations from config['geos']."""
+    raw_geos = config["geos"]
+    main_fips = []
+    for geo_value in raw_geos:
+        geo_str = str(geo_value)
+        if len(geo_str) < 2:
+            geo_str = geo_str.zfill(2)
+        main_fips.append(geo_str[:2])
+    main_fips = list(set(main_fips))
+    main_abbr = [abbr for abbr in fips_info(main_fips)["abbr"] if abbr is not None]
+    return main_fips, main_abbr
 
-    This class provides a simple programmatic interface so callers can import
-    and run the full download workflow (or pieces of it) from another module.
+
+DOWNLOAD_STEPS = ["census", "pums", "shapefiles", "lodes", "ct_puma_crosswalk", "geocorr", "cbp", "school"]
+
+DOWNLOAD_STEP_LABELS = {
+    "census": "census",
+    "pums": "PUMS",
+    "shapefiles": "shapefile",
+    "lodes": "LODES",
+    "ct_puma_crosswalk": "CT-PUMA crosswalk",
+    "geocorr": "geocorr",
+    "cbp": "CBP",
+    "school": "school",
+}
+
+
+def download_data(config=None, base_dir=None, verbose=1, steps=None):
+    """Run the download workflow for the given configuration.
+
+    Args:
+        config (dict, optional): Config dict, e.g. from write_config(). If not
+            provided, loads via load_config(base_dir) (merging config.local.json).
+        base_dir (str, optional): Base directory to use for relative paths.
+            Defaults to this file's directory.
+        verbose: If 1, print output. If 0, suppress output. Defaults to 1.
+        steps (list[str], optional): Which steps to run, e.g. ["census", "school"].
+            Defaults to all steps. Always runs in the fixed order given by
+            DOWNLOAD_STEPS, regardless of the order passed in. Each step only
+            validates the config keys it actually needs.
+
+    Returns:
+        dict: The config dict that was used.
     """
+    base_dir = base_dir if base_dir is not None else BASE_DIR
+    if config is None:
+        config = load_config(base_dir)
 
-    def __init__(self, config=None, base_dir=None, verbose=1, auto_run=True):
-        """Create a downloader.
+    if steps is None:
+        requested_steps = DOWNLOAD_STEPS
+    else:
+        unknown = [s for s in steps if s not in DOWNLOAD_STEPS]
+        if unknown:
+            raise ValueError(f"Unknown download step(s): {unknown}. Valid steps are: {DOWNLOAD_STEPS}")
+        requested_steps = [s for s in DOWNLOAD_STEPS if s in steps]
 
-        Args:
-            config: Optional dict with configuration. If provided, takes
-                precedence over loading from config.json.
-            base_dir: Optional base directory to use for relative paths.
-                Defaults to this file's directory.
-            verbose: If 1, print output. If 0, suppress output. Defaults to 1.
-        """
-        self.verbose = verbose
-        self.base_dir = base_dir if base_dir is not None else BASE_DIR
-        if config is not None:
-            self.config = config
-        else:
-            cfg_path = os.path.join(self.base_dir, "config.json")
-            if not os.path.exists(cfg_path):
-                raise FileNotFoundError(f"config.json file not found at {cfg_path}. Please create this file with the required configuration.")
-            with open(cfg_path, "r") as f:
-                self.config = json.load(f)
-        # Initialize OUTPUT_DIR from config["path"] (fallback to package dir)
-        global OUTPUT_DIR
-        OUTPUT_DIR = self.config.get("path", self.base_dir)
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        if auto_run:
-            self.run_all()
-        
-    def run_all(self):
-        """Run the full download workflow using the loaded configuration."""
-        config = self.config
-        if self.verbose:
-            print("")
-            print("============================================================")
-            print("Running DownloadData()")
-            print("============================================================")
-            
-        # Basic validation for keys required by multiple steps
-        if "census_api_key" not in config:
-            raise KeyError("census_api_key not found in config. Please add your Census API key to the configuration.")
-        if "main_year" not in config:
-            raise KeyError("main_year not found in config. Please add the main year to the configuration.")
-        if "decennial_year" not in config:
-            raise KeyError("decennial_year not found in config. Please add the decennial year to the configuration.")
+    global OUTPUT_DIR
+    OUTPUT_DIR = config.get("path", base_dir)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-        # Delegate to per-step methods so they can also be called individually
-        self.pull_census_data()
-        self.pull_pums_data()
-        self.download_shapefiles()
-        self.pull_LODES()
-        self.download_ct_puma_crosswalk()
-        self.geocorr_files()
-        self.download_cbp_data()
-        self.download_school_data()
-        if self.verbose:
-            print("\nAll DownloadData() steps complete")
-
-    def _main_state_fips_and_abbr(self):
-        """Derive main state FIPS codes and abbreviations from config['geos']."""
-        raw_geos = self.config["geos"]
-        main_fips = []
-        for geo_value in raw_geos:
-            geo_str = str(geo_value)
-            if len(geo_str) < 2:
-                geo_str = geo_str.zfill(2)
-            main_fips.append(geo_str[:2])
-        main_fips = list(set(main_fips))
-        main_abbr = [abbr for abbr in fips_info(main_fips)["abbr"] if abbr is not None]
-        return main_fips, main_abbr
-
-    def pull_census_data(self):
-        """Run the census download step using this instance's configuration."""
-        config = self.config
-        v = self.verbose
-        if v:
-            print("*** Running DownloadData.pull_census_data() ***")
-
-        if "census_api_key" not in config:
-            raise KeyError("census_api_key not found in config.")
-        if "main_year" not in config:
-            raise KeyError("main_year not found in config.")
-        if "decennial_year" not in config:
-            raise KeyError("decennial_year not found in config.")
-
-        key = config["census_api_key"]
-        year_ACS = config["main_year"]
-        year_DEC = config["decennial_year"]
-
-        main_fips, _ = self._main_state_fips_and_abbr()
-        state_fips = main_fips
-
-        ACS_table_codes = config["acs_required"]
-        if year_DEC == 2020:
-            DEC_table_codes = [config["dec_required"][1]]  # "P18" for 2020
-        else:
-            DEC_table_codes = [config["dec_required"][0]]  # "P43" otherwise
-
-        pull_census_data(
-            state_fips=state_fips,
-            year_ACS=year_ACS,
-            year_DEC=year_DEC,
-            ACS_table_codes=ACS_table_codes,
-            DEC_table_codes=DEC_table_codes,
-            key=key,
-            verbose=v,
-        )
-
-    def pull_pums_data(self):
-        """Run the PUMS download step using this instance's configuration."""
-        config = self.config
-        v = self.verbose
-
-        _, main_abbr = self._main_state_fips_and_abbr()
-
-        if "use_pums" not in config or config["use_pums"] is None:
-            states = main_abbr
-        else:
-            use_pums_fips = [str(v).zfill(2) for v in config["use_pums"]]
-            states = [abbr for abbr in fips_info(use_pums_fips)["abbr"] if abbr is not None]
-
-        if "main_year" not in config:
-            raise KeyError("main_year not found in config.")
-        year = config["main_year"]
-
-        pull_pums_data(states=states, year=year, verbose=v)
-
-    def download_shapefiles(self):
-        """Run the shapefile download step using this instance's configuration."""
-        config = self.config
-        v = self.verbose
-
-        main_fips, _ = self._main_state_fips_and_abbr()
-        state_fips = main_fips
-
-        if "main_year" not in config:
-            raise KeyError("main_year not found in config.")
-        year = config["main_year"]
-
-        download_shapefiles(state_fips, year, v)
-
-    def pull_LODES(self):
-        """Run the LODES download step using this instance's configuration."""
-        config = self.config
-        v = self.verbose
-
-        main_fips, main_abbr = self._main_state_fips_and_abbr()
-        states_main = main_abbr
-
-        if "commute_states" not in config or config["commute_states"] is None:
-            states_aux = []
-        else:
-            aux_states_fips = [str(v).zfill(2) for v in config["commute_states"]]
-            aux_states_filtered = [state for state in aux_states_fips if state not in main_fips]
-            states_aux = [abbr for abbr in fips_info(aux_states_filtered)["abbr"] if abbr is not None]
-
-        if "main_year" not in config:
-            raise KeyError("main_year not found in config.")
-        year = config["main_year"]
-
-        pull_LODES(states_main, states_aux, year, v)
-
-    def download_ct_puma_crosswalk(self):
-        """Run the CT→PUMA crosswalk download step using this instance's configuration."""
-        config = self.config
-        v = self.verbose
-
-        if "main_year" not in config:
-            raise KeyError("main_year not found in config.")
-        main_year = config["main_year"]
-
-        download_ct_puma_crosswalk(main_year, v)
-
-    def download_cbp_data(self):
-        """Run the CBP download step using this instance's configuration."""
-        v = self.verbose
-        download_cbp_data(v)
-
-    def geocorr_files(self):
-        """Run the geocorr copy step using this instance's configuration."""
-        v = self.verbose
-        geocorr_files(v)
-
-    def download_school_data(self):
-        """Run only the school-data download step using current configuration."""
-        if "main_year" not in self.config:
-            raise KeyError("main_year not found in config.")
-        year = self.config["main_year"]
-        v = self.verbose
-        download_school_data(year, v)
-
-    def census_metadata(self, refresh=False):
-        """Return the combined ACS/Decennial name→label mapping.
-
-        Args:
-            refresh (bool): If True, recompute from the Census API even if a local
-                file exists. If False (default), load from file if available.
-
-        Returns:
-            dict: Mapping from variable name to label.
-        """
-        mapping_path = os.path.join(OUTPUT_DIR, "census_metadata.json")
-        if not refresh and os.path.exists(mapping_path):
-            with open(mapping_path, "r") as f:
-                return json.load(f)
-
-        # Recompute from API
-        main_year = self.config["main_year"]
-        decennial_year = self.config["decennial_year"]
-        acs_meta = get_census_metadata(name="acs/acs5", vintage=main_year)
-        if decennial_year == 2020:
-            dec_meta = get_census_metadata(name="dec/dhc", vintage=decennial_year)
-        else:
-            dec_meta = get_census_metadata(name="dec/sf1", vintage=decennial_year)
-        metadata_required = pd.concat([acs_meta, dec_meta], ignore_index=True)
-        name_label_mapping = dict(zip(metadata_required["name"], metadata_required["label"]))
-        return name_label_mapping
-
-    def pipeline(self):
-        """Print a summary of each step: function, websites, output folder, and files.
-
-        This does not hit the network; it reports the planned sources and destinations
-        based on the current configuration and naming patterns in this module.
-        """
-        config = self.config
-        main_year = config["main_year"]
-        decennial_year = config["decennial_year"]
-        raw_geos = config["geos"]
-
-        # Derive state info (mirrors logic in run_all)
-        main_fips = []
-        for geo_value in raw_geos:
-            geo_str = str(geo_value)
-            if len(geo_str) < 2:
-                geo_str = geo_str.zfill(2)
-            main_fips.append(geo_str[:2])
-        main_fips = sorted(list(set(main_fips)))
-        main_abbr = [abbr for abbr in fips_info(main_fips)["abbr"] if abbr is not None]
-
-        # Determine LODES version
-        lodes_version = "LODES8" if main_year >= 2020 else "LODES7"
-
-        steps = [
-            {
-                "function": "pull_census_data",
-                "websites": [
-                    f"https://api.census.gov/data/{main_year}/acs/acs5",
-                    f"https://api.census.gov/data/{decennial_year}/dec/{'dhc' if decennial_year == 2020 else 'sf1'}",
-                ],
-                "output_folder": os.path.join(OUTPUT_DIR, "census", "<STATE_ABBR>"),
-                "files": [
-                    f"ACSDT5Y{main_year}.<ACS_TABLE>-Data.csv",
-                    f"DECENNIALSF1{decennial_year}.<DEC_TABLE>-Data.csv",
-                ],
-            },
-            {
-                "function": "pull_pums_data",
-                "websites": [
-                    f"https://www2.census.gov/programs-surveys/acs/data/pums/{main_year}/5-Year/csv_h<state>.zip",
-                    f"https://www2.census.gov/programs-surveys/acs/data/pums/{main_year}/5-Year/csv_p<state>.zip",
-                ],
-                "output_folder": os.path.join(OUTPUT_DIR, "pums"),
-                "files": [
-                    "psam_h<STATE_FIPS>.csv",
-                    "psam_p<STATE_FIPS>.csv",
-                ],
-            },
-            {
-                "function": "download_shapefiles",
-                "websites": [
-                    f"https://www2.census.gov/geo/tiger/TIGER{main_year}/BG/tl_{main_year}_<STATE_FIPS>_bg.zip",
-                ],
-                "output_folder": os.path.join(OUTPUT_DIR, "geo"),
-                "files": [
-                    "Extracted TIGER/Line BG shapefile contents",
-                ],
-            },
-            {
-                "function": "download_ct_puma_crosswalk",
-                "websites": [
-                    (
-                        f"https://www2.census.gov/geo/docs/maps-data/data/rel2020/2020_Census_Tract_to_2020_PUMA.txt"
-                        if main_year >= 2020
-                        else f"https://www2.census.gov/geo/docs/maps-data/data/rel/2010_Census_Tract_to_2010_PUMA.txt"
-                    )
-                ],
-                "output_folder": os.path.join(OUTPUT_DIR, "geo"),
-                "files": [
-                    (
-                        "2020_Census_Tract_to_2020_PUMA.txt (text from web page)"
-                        if main_year >= 2020
-                        else "2010_Census_Tract_to_2010_PUMA.txt (text from web page)"
-                    )
-                ],
-            },
-            {
-                "function": "pull_LODES",
-                "websites": [
-                    f"https://lehd.ces.census.gov/data/lodes/{lodes_version}/<state>/od/<state>_od_main_JT01_{main_year}.csv.gz",
-                    f"https://lehd.ces.census.gov/data/lodes/{lodes_version}/<state>/od/<state>_od_aux_JT01_{main_year}.csv.gz",
-                    f"https://lehd.ces.census.gov/data/lodes/{lodes_version}/<state>/wac/<state>_wac_S000_JT01_{main_year}.csv.gz",
-                ],
-                "output_folder": os.path.join(OUTPUT_DIR, "work"),
-                "files": [
-                    f"<STATE>_od_main_JT01_{main_year}.csv.gz",
-                    f"<STATE>_od_aux_JT01_{main_year}.csv.gz",
-                    f"<STATE>_wac_S000_JT01_{main_year}.csv.gz",
-                ],
-            },
-            {
-                "function": "download_cbp_data",
-                "websites": [
-                    "https://www2.census.gov/programs-surveys/cbp/datasets/2016/cbp16co.zip",
-                ],
-                "output_folder": os.path.join(OUTPUT_DIR, "work"),
-                "files": [
-                    "cbp16co.zip",
-                ],
-            },
-            {
-                "function": "geocorr_files",
-                "websites": [
-                    "(package-local) src/geopops/geocorr/*.csv",
-                ],
-                "output_folder": os.path.join(OUTPUT_DIR, "geo"),
-                "files": [
-                    "geocorr2018_* (copied)",
-                ],
-            },
-            {
-                "function": "download_school_data",
-                "websites": [
-                    f"https://nces.ed.gov/programs/edge/data/EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}.zip",
-                    # Enrollment datasets (examples)
-                    f"https://nces.ed.gov/ccd/Data/zip/ccd_sch_029_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_w_1a_082120.zip",
-                    f"https://nces.ed.gov/ccd/Data/zip/ccd_SCH_052_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_l_1a_082120.zip",
-                    f"https://nces.ed.gov/ccd/Data/zip/ccd_sch_059_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}_l_1a_082120.zip",
-                ],
-                "output_folder": os.path.join(OUTPUT_DIR, "school"),
-                "files": [
-                    f"EDGE_GEOCODE_PUBLICSCH_{str(main_year)[-2:]}{str(main_year + 1)[-2:]}.xlsx",
-                    "Shapefiles_SCH/* (extracted)",
-                    "Enrollment CSVs (extracted; some SAS files deleted)",
-                ],
-            },
-        ]
-
-        # Print overview (always print when pipeline is called)
-        print("Pipeline overview:\n")
-        print(f"- OUTPUT_DIR: {OUTPUT_DIR}")
-        print(f"- main_year: {main_year}, decennial_year: {decennial_year}")
-        if main_abbr:
-            print(f"- states: {', '.join(main_abbr)}")
+    if verbose:
         print("")
+        print("============================================================")
+        print("Running download_data()")
+        print("============================================================")
 
-        for step in steps:
-            print(f"Function: {step['function']}")
-            print("Websites:")
-            for site in step["websites"]:
-                print(f"  - {site}")
-            print(f"Output folder:\n  - {step['output_folder']}")
-            print("Files:")
-            for f in step["files"]:
-                print(f"  - {f}")
-            print("")
+    for step in requested_steps:
+        if step == "census":
+            if "census_api_key" not in config:
+                raise KeyError("census_api_key not found in config. Please add your Census API key to the configuration.")
+            if "main_year" not in config:
+                raise KeyError("main_year not found in config. Please add the main year to the configuration.")
+            if "decennial_year" not in config:
+                raise KeyError("decennial_year not found in config. Please add the decennial year to the configuration.")
+            main_fips, _ = _main_state_fips_and_abbr(config)
+            year_DEC = config["decennial_year"]
+            ACS_table_codes = config["acs_required"]
+            if year_DEC == 2020:
+                DEC_table_codes = [config["dec_required"][1]]  # "P18" for 2020
+            else:
+                DEC_table_codes = [config["dec_required"][0]]  # "P43" otherwise
+            pull_census_data(
+                state_fips=main_fips,
+                year_ACS=config["main_year"],
+                year_DEC=year_DEC,
+                ACS_table_codes=ACS_table_codes,
+                DEC_table_codes=DEC_table_codes,
+                key=config["census_api_key"],
+                verbose=verbose,
+            )
+
+        elif step == "pums":
+            if "main_year" not in config:
+                raise KeyError("main_year not found in config.")
+            _, main_abbr = _main_state_fips_and_abbr(config)
+            if "use_pums" not in config or config["use_pums"] is None:
+                pums_states = main_abbr
+            else:
+                use_pums_fips = [str(code).zfill(2) for code in config["use_pums"]]
+                pums_states = [abbr for abbr in fips_info(use_pums_fips)["abbr"] if abbr is not None]
+            pull_pums_data(states=pums_states, year=config["main_year"], verbose=verbose)
+
+        elif step == "shapefiles":
+            if "main_year" not in config:
+                raise KeyError("main_year not found in config.")
+            main_fips, _ = _main_state_fips_and_abbr(config)
+            download_shapefiles(main_fips, config["main_year"], verbose)
+
+        elif step == "lodes":
+            if "main_year" not in config:
+                raise KeyError("main_year not found in config.")
+            main_fips, main_abbr = _main_state_fips_and_abbr(config)
+            if "commute_states" not in config or config["commute_states"] is None:
+                states_aux = []
+            else:
+                aux_states_fips = [str(code).zfill(2) for code in config["commute_states"]]
+                aux_states_filtered = [state for state in aux_states_fips if state not in main_fips]
+                states_aux = [abbr for abbr in fips_info(aux_states_filtered)["abbr"] if abbr is not None]
+            pull_LODES(main_abbr, states_aux, config["main_year"], verbose)
+
+        elif step == "ct_puma_crosswalk":
+            if "main_year" not in config:
+                raise KeyError("main_year not found in config.")
+            download_ct_puma_crosswalk(config["main_year"], verbose)
+
+        elif step == "geocorr":
+            geocorr_files(verbose)
+
+        elif step == "cbp":
+            download_cbp_data(verbose)
+
+        elif step == "school":
+            if "main_year" not in config:
+                raise KeyError("main_year not found in config.")
+            download_school_data(config["main_year"], verbose)
+
+    if verbose:
+        if steps is not None and set(requested_steps) != set(DOWNLOAD_STEPS):
+            labels = ", ".join(DOWNLOAD_STEP_LABELS[s] for s in requested_steps)
+            print(f"\nAll {labels} data downloaded")
+        else:
+            print("\nAll download_data() steps complete")
+
+    return config
+
 
 def main():
-    """Main function to preserve CLI behavior using the class wrapper."""
-    downloader = DownloadData()
-    downloader.run_all()
+    """Main function to preserve CLI behavior using the function API."""
+    config = load_config(BASE_DIR)
+    download_data(config)
+
+
 if __name__ == "__main__":
     main()

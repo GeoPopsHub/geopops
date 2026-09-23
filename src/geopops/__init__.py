@@ -1,10 +1,10 @@
-from .config import WriteConfig
-from .download_data import DownloadData
-from .process_data import ProcessData, QualityCheck
+from .write_config import write_config
+from .download_data import download_data
+from .process_data import process_data, quality_check, QualityCheck
 from .julia import RunJulia
-from .generate_pop import GeneratePop
-from .run_all import RunAll
-from .geopops_starsim import ForStarsim
+from .generate_pop import generate_pop, Population
+from .run_all import run_all
+from . import for_starsim
 
-__all__ = ["WriteConfig", "DownloadData", "ProcessData", "RunJulia", "GeneratePop", "RunAll", "ForStarsim", "QualityCheck"]
+__all__ = ["write_config", "download_data", "process_data", "quality_check", "RunJulia", "generate_pop", "Population", "run_all", "for_starsim", "QualityCheck"]
 
