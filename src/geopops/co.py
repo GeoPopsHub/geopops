@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Johns Hopkins University
 """
 Combinatorial optimization via simulated annealing.
 Translated from julia/CO.jl — parallelism removed, uses numpy.

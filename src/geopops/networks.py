@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Johns Hopkins University
 """
 Contact network generation (SBM, small-world, complete) and location matrices.
 Translated from julia/netw.jl.

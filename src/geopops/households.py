@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Johns Hopkins University
 """
 Household, person, and group quarters generation from PUMS samples.
 Translated from julia/households.jl.

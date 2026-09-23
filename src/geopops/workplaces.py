@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Johns Hopkins University
 """
 Workplace generation, worker assignment, and commute matrix IPF.
 Translated from julia/workplaces.jl.

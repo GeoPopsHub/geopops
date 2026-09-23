@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Johns Hopkins University
 """
 Export synthetic population and networks to CSV/MTX files.
 Translated from julia/export_synthpop.jl and julia/export_network.jl.

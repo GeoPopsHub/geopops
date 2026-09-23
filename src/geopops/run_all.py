@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 Johns Hopkins University
 """Top-level pipeline orchestrator for GeoPops."""
 
 from .write_config import write_config, load_config, update_config_values
