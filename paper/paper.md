@@ -179,7 +179,7 @@ The user specifies a geographical region, and GeoPops downloads all the
 necessary data from publicly available sources (\autoref{tab:data}) through an
 Application Programming Interface (API). During processing, we combine select
 Census columns to avoid over granular targets in the CO step. For CO, we use 85
-target columns [TODO: link to list] that match with PUMS columns and are
+[target columns](https://github.com/GeoPopsHub/geopops/blob/main/target_columns.csv) that match with PUMS columns and are
 relevant to disease transmission and useful in generating activity networks. We
 use IPF to estimate workers by industry by residence type because Census data on
 employment by CBG does not distinguish individuals living in households versus
