@@ -12,6 +12,7 @@ authors:
     corresponding: true
     affiliation: "1, 2"
   - name: Cliff C. Kerr
+    orcid: 0000-0003-2517-2354
     affiliation: 3
   - name: Alexander Tulchinsky
     orcid: 0000-0002-7323-5041
