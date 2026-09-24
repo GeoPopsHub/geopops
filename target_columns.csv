@@ -1,0 +1,86 @@
+pums_sample_column,acs_target_column
+fam_hh_2,B11016:Family households:2-person household
+fam_hh_3,B11016:Family households:3-person household
+fam_hh_4,B11016:Family households:4-person household
+fam_hh_5,B11016:Family households:5-person household
+fam_hh_6,B11016:Family households:6-person household
+fam_hh_7o,B11016:Family households:7-or-more person household
+non_fam_hh_1,B11016:Nonfamily households:1-person household
+non_fam_hh_2,B11016:Nonfamily households:2-person household
+non_fam_hh_3,B11016:Nonfamily households:3-person household
+non_fam_hh_4,B11016:Nonfamily households:4-person household
+non_fam_hh_5,B11016:Nonfamily households:5-person household
+non_fam_hh_6,B11016:Nonfamily households:6-person household
+non_fam_hh_7o,B11016:Nonfamily households:7-or-more person household
+w_own_ch_u18_married_fam_work0,B23009:With own children of the householder under 18 years:Married-couple family:No workers
+w_own_ch_u18_married_fam_work1,B23009:With own children of the householder under 18 years:Married-couple family:1 worker
+w_own_ch_u18_married_fam_work2,B23009:With own children of the householder under 18 years:Married-couple family:2 workers:
+w_own_ch_u18_married_fam_work3o,B23009:With own children of the householder under 18 years:Married-couple family:3 or more workers:
+w_own_ch_u18_unmar_fam_work0,B23009:With own children of the householder under 18 years:Other family:Unmarried householder:No workers
+w_own_ch_u18_unmar_fam_work1,B23009:With own children of the householder under 18 years:Other family:Unmarried householder:1 worker
+w_own_ch_u18_unmar_fam_work2,B23009:With own children of the householder under 18 years:Other family:Unmarried householder:2 workers
+w_own_ch_u18_unmar_fam_work3o,B23009:With own children of the householder under 18 years:Other family:Unmarried householder:3 or more workers
+no_own_ch_u18_married_fam_work0,B23009:No own children of the householder under 18 years:Married-couple family:No workers
+no_own_ch_u18_married_fam_work1,B23009:No own children of the householder under 18 years:Married-couple family:1 worker
+no_own_ch_u18_married_fam_work2,B23009:No own children of the householder under 18 years:Married-couple family:2 workers:
+no_own_ch_u18_married_fam_work3o,B23009:No own children of the householder under 18 years:Married-couple family:3 or more workers:
+no_own_ch_u18_unmar_fam_work0,B23009:No own children of the householder under 18 years:Other family:Unmarried householder:No workers
+no_own_ch_u18_unmar_fam_work1,B23009:No own children of the householder under 18 years:Other family:Unmarried householder:1 worker
+no_own_ch_u18_unmar_fam_work2,B23009:No own children of the householder under 18 years:Other family:Unmarried householder:2 workers
+no_own_ch_u18_unmar_fam_work3o,B23009:No own children of the householder under 18 years:Other family:Unmarried householder:3 or more workers
+fam_married_w_rel_ch_u6_only,B11004:Married-couple family:With related children of the householder under 18 years:Under 6 years only
+fam_married_w_rel_ch_u6_and_6_17,B11004:Married-couple family:With related children of the householder under 18 years:Under 6 years and 6 to 17 years
+fam_married_w_rel_ch_6_17_only,B11004:Married-couple family:With related children of the householder under 18 years:6 to 17 years only
+fam_married_no_rel_ch_u18,B11004:Married-couple family:No related children of the householder under 18 years
+fam_unmar_w_rel_ch_u6_only,B11004:Other family:Unmarried householder:With related children of the householder under 18 years:Under 6 years only
+fam_unmar_w_rel_ch_u6_and_6_17,B11004:Other family:Unmarried householder:With related children of the householder under 18 years:Under 6 years and 6 to 17 years
+fam_unmar_w_rel_ch_6_17_only,B11004:Other family:Unmarried householder:With related children of the householder under 18 years:6 to 17 years only
+fam_unmar_no_rel_ch_u18,B11004:Other family:Unmarried householder:No related children of the householder under 18 years
+partner_hh_ch_u18,B11012:Two-partner household:With children of the householder under 18 years
+partner_hh_no_ch_u18,B11012:Two-partner household:With no children of the householder under 18 years
+hh_alone,B11012:Single householder:Living alone
+hh_single_ch_u18,B11012:Single householder:With own children under 18 years
+hh_single_other_rel,"B11012:Single householder:With relatives, no own children under 18 years"
+hh_nonrel_only,B11012:Single householder:With only nonrelatives present
+ch_u18_in_hh,B09018:
+grandch_u18,B09018:Grandchild
+age_18_34_alone,B09021:18 to 34 years:Lives alone
+age_18_34_partner,B09021:18 to 34 years:Householder living with partner or partner of householder
+age_18_34_child_of_hh,B09021:18 to 34 years:Child of householder
+age_18_34_other_rel,B09021:18 to 34 years:Other relatives
+age_18_34_non_rel,B09021:18 to 34 years:Other nonrelatives
+age_35_64_alone,B09021:35 to 64 years:Lives alone
+age_35_64_partner,B09021:35 to 64 years:Householder living with partner or partner of householder
+age_35_64_child_of_hh,B09021:35 to 64 years:Child of householder
+age_35_64_other_rel,B09021:35 to 64 years:Other relatives
+age_35_64_non_rel,B09021:35 to 64 years:Other nonrelatives
+age_65o_alone,B09021:65 years and over:Lives alone
+age_65o_partner,B09021:65 years and over:Householder living with partner or partner of householder
+age_65o_other_rel,B09021:65 years and over:Other relatives
+age_65o_non_rel,B09021:65 years and over:Other nonrelatives
+q1_1,B19001:q1_1
+q1_2,B19001:q1_2
+q1_3,B19001:q1_3
+q2,B19001:q2
+q3,B19001:q3
+q4,B19001:q4
+q5,B19001:q5
+snap,B22010:Household received Food Stamps/SNAP in the past 12 months:
+ind_AGR_EXT,C24030:AGR_EXT
+ind_CON,C24030:CON
+ind_MFG,C24030:MFG
+ind_WHL,C24030:WHL
+ind_RET,C24030:RET
+ind_TRN_UTL,C24030:TRN_UTL
+ind_INF,C24030:INF
+ind_FIN,C24030:FIN
+ind_PRF,C24030:PRF
+ind_EDU,C24030:EDU
+ind_MED,C24030:MED
+ind_ENT_art,C24030:ENT_art
+ind_ENT_food,C24030:ENT_food
+ind_SRV,C24030:SRV
+ind_ADM_MIL,C24030:ADM_MIL
+hh_race_black_alone,B25006:Householder who is Black or African American alone
+hh_white_non_hispanic,B11001H:Householder white non-hispanic
+hh_hispanic,B11001I:Householder hispanic any race
