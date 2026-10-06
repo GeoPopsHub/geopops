@@ -554,8 +554,8 @@ def pull_pums_data(states, year, verbose=1):
     Returns:
         Outputs data files in the pums folder
         
-    Notes: 2024 and 2025 urls require password to access. If main year > 2023, use 2023 data.
-    This means that the combinatorial optimization algorithm will combine households from 2023 PUMS data
+    Notes: No PUMS data for 2025 yet. If main year > 2024, use 2024 data.
+    This means that the combinatorial optimization algorithm will combine households from 2024 PUMS data
     such that the set reasonably approximates Census distributions for target variables in the year specified in the config file.
     This can still produce a population that is reasonably representative of the target year.
     """
@@ -566,8 +566,8 @@ def pull_pums_data(states, year, verbose=1):
     
     # Set the URL of the file to download
     for state in states:
-        if year > 2023:
-            year = 2023
+        if year > 2024:
+            year = 2024
         file_urls.append((state, f"https://www2.census.gov/programs-surveys/acs/data/pums/{year}/5-Year/csv_h{state}.zip"))
         file_urls.append((state, f"https://www2.census.gov/programs-surveys/acs/data/pums/{year}/5-Year/csv_p{state}.zip"))
         # if verbose:
