@@ -9,62 +9,25 @@ import json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Cached network dataframes for one population at a time, with the
-# (path, random_seed) key identifying which population they came from.
+# Built-in network name -> (matrix file tag, output csv name).
+_LAYERS = {
+    "homenet": ("hh", "net_h"),
+    "schoolnet": ("sch", "net_s"),
+    "worknet": ("wp", "net_w"),
+    "gqnet": ("gq", "net_g"),
+}
+
+# Cached network dataframes for one population at a time, filled in one layer
+# at a time as each is requested, with the path key identifying which
+# population they came from.
 # Asking for a different population reloads. Without that key -- as was the
 # case originally -- a second population in the same session silently got
 # the first one's edges.
-_NETS = None
+_NETS = {}
 _NET_KEY = None
-
-
-def _load_age_by_matrix_index(pop_export_dir):
-    """Map matrix row/col index (``index_zero``) to age, same merge as ``people()``."""
-    adj = pd.read_csv(os.path.join(pop_export_dir, "adj_mat_keys.csv"), low_memory=False)
-    people = pd.read_csv(os.path.join(pop_export_dir, "people.csv"), low_memory=False)
-    merged = adj.merge(people, on=["p_id", "hh_id", "cbg_id"], how="left")
-    merged = merged.drop_duplicates(subset=["index_zero"], keep="first")
-    return merged.set_index("index_zero")["age"]
-
-
-def _canonicalize_undirected_edges_df(net_df, age_by_idx):
-    """Reorder ``p1``, ``p2`` so ``age(p1) <= age(p2)`` when both ages exist; else smaller index is ``p1``."""
-    if net_df.empty:
-        return net_df.copy()
-    out = net_df.copy()
-    p1 = out["p1"].to_numpy(dtype=np.int64, copy=True)
-    p2 = out["p2"].to_numpy(dtype=np.int64, copy=True)
-    a1 = age_by_idx.reindex(p1).to_numpy()
-    a2 = age_by_idx.reindex(p2).to_numpy()
-    a1 = np.where(pd.isna(a1), np.nan, np.asarray(a1, dtype=float))
-    a2 = np.where(pd.isna(a2), np.nan, np.asarray(a2, dtype=float))
-    both = np.isfinite(a1) & np.isfinite(a2)
-    swap = np.zeros(len(out), dtype=bool)
-    swap[both] = (a1[both] > a2[both]) | ((a1[both] == a2[both]) & (p1[both] > p2[both]))
-    swap[~both] = p1[~both] > p2[~both]
-    out.loc[swap, ["p1", "p2"]] = np.column_stack([p2[swap], p1[swap]])
-    return out
-
-
-def _random_flip_undirected_edges_df(net_df, rng):
-    """
-    Randomly swap (p1, p2) per edge with probability 0.5.
-    This only changes endpoint labeling and therefore affects plots that treat (p1_age, p2_age) as ordered.
-    """
-    if net_df.empty:
-        return net_df.copy()
-    out = net_df.copy()
-    p1 = out["p1"].to_numpy(dtype=np.int64, copy=True)
-    p2 = out["p2"].to_numpy(dtype=np.int64, copy=True)
-    flip = rng.random(len(out)) < 0.5
-    # swap endpoints for flipped edges
-    p1_new = p1.copy()
-    p2_new = p2.copy()
-    p1_new[flip] = p2[flip]
-    p2_new[flip] = p1[flip]
-    out["p1"] = p1_new
-    out["p2"] = p2_new
-    return out
+# edge_weight each layer's csv was last saved with, so the csv is rewritten
+# only when a call asks for a different weight.
+_NET_SAVED = {}
 
 
 class _SubgroupTracking(ss.Analyzer):
@@ -112,7 +75,7 @@ class _SubgroupTracking(ss.Analyzer):
 
 class _GPNetwork(ss.Network):
     def __init__(self, name, edge_weight=1.0, csv_path=None, network_df=None, p1_col='p1', p2_col='p2', beta_col=None,
-                 path=None, random_seed=None):
+                 path=None):
         super().__init__()
         self.name = name
         self.edge_weight = edge_weight
@@ -121,11 +84,10 @@ class _GPNetwork(ss.Network):
         self.p1_col = p1_col
         self.p2_col = p2_col
         self.beta_col = beta_col
-        # Which population to read, and the seed for the endpoint flip. These are
-        # the only two values this class ever needed from a config; taking them
-        # directly is what lets a caller keep GPNetwork and People in agreement.
+        # Which population to read. This is the only value this class ever
+        # needed from a config; taking it directly is what lets a caller keep
+        # GPNetwork and People in agreement.
         self.path = path
-        self.random_seed = random_seed
 
         if self.csv_path is not None and self.network_df_input is not None:
             raise ValueError("Provide only one of csv_path or network_df, not both.")
@@ -135,17 +97,15 @@ class _GPNetwork(ss.Network):
         elif self.csv_path is not None:
             self.network_df = self._load_custom_network_csv()
         else:
-            self._ensure_networks_created()
-
-            self.network_map = _NETS
-
-            if name not in self.network_map:
+            if name not in _LAYERS:
                 raise ValueError(
-                    f"Unknown network name '{name}'. Available built-in names: {list(self.network_map.keys())}. "
+                    f"Unknown network name '{name}'. Available built-in names: {list(_LAYERS.keys())}. "
                     "To use a custom CSV network, provide csv_path=..."
                 )
 
-            self.network_df = self.network_map[name]
+            self._ensure_network_created()
+
+            self.network_df = _NETS[name]
 
         self._populate_edges()
 
@@ -213,74 +173,74 @@ class _GPNetwork(ss.Network):
         self.validate()
 
     def _network_config(self):
-        """Resolve (path, flip_seed) -- which population, and the flip seed.
+        """Resolve path -- which population to read.
 
-        An explicitly passed path/random_seed wins. Anything not given falls
-        back to the package config, which is what callers that pass nothing
-        have always used, so existing calls are unaffected.
+        An explicitly passed path wins. If not given it falls back to the
+        package config, which is what callers that pass nothing have always
+        used, so existing calls are unaffected.
         """
-        path, seed = self.path, self.random_seed
-        if path is None or seed is None:
+        path = self.path
+        if path is None:
             cfg_path = os.path.join(BASE_DIR, "config.json")
             if not os.path.exists(cfg_path):
                 raise FileNotFoundError(f"config.json file not found at {cfg_path}")
             with open(cfg_path, "r") as f:
                 config = json.load(f)
-            if path is None:
-                path = config.get("path")
-            if seed is None:
-                seed = config.get("random_seed", 0)
-        return path, int(seed)
+            path = config.get("path")
+        return path
 
-    def _ensure_networks_created(self):
-        """Load this population's networks unless they are already cached."""
-        global _NETS, _NET_KEY
+    def _ensure_network_created(self):
+        """Load this population's layer for self.name unless it is already cached.
+
+        The layer's csv is saved with self.edge_weight, and rewritten whenever
+        a call asks for a different weight than the one last saved.
+        """
+        global _NETS, _NET_KEY, _NET_SAVED
         key = self._network_config()
-        if _NETS is None or _NET_KEY != key:
-            _NETS, _NET_KEY = _create_networks(*key), key
+        if _NET_KEY != key:
+            _NETS, _NET_SAVED, _NET_KEY = {}, {}, key
+        if self.name not in _NETS:
+            _NETS[self.name] = _create_network(self.name, key)
+        weight = float(self.edge_weight)
+        if _NET_SAVED.get(self.name) != weight:
+            _save_network(self.name, key, _NETS[self.name], weight)
+            _NET_SAVED[self.name] = weight
 
     def step(self):
         self.validate()
 
 
-def _create_networks(path, flip_seed):
-    """Read one population's four .mtx layers into dataframes, and cache them to CSV.
+def _create_network(name, path):
+    """Read one of a population's .mtx layers into a dataframe.
 
-    Returns a dict keyed by network name. The flip order (hh, sch, wp, gq) draws
-    from a single seeded RNG, so it must not be reordered.
+    Edges are kept as stored in the matrix file: p1 is the column index, p2
+    the row index.
     """
-    print("\n*** Running for_starsim.network(): loading matrices ***")
+    print(f"\n*** Running for_starsim.network(): loading {name} matrix ***")
+    tag, _ = _LAYERS[name]
 
-    def new_layer(file):
-        m = mmread(file)
-        mat = pd.DataFrame({
-            "p1": np.asarray(m.col, dtype=np.int64),
-            "p2": np.asarray(m.row, dtype=np.int64),
-        })
-        mat["edge_weight"] = np.int64(1)
-        return mat
+    m = mmread(os.path.join(path, "pop_export", f"adj_upper_triang_{tag}.mtx"))
+    net = pd.DataFrame({
+        "p1": np.asarray(m.col, dtype=np.int64),
+        "p2": np.asarray(m.row, dtype=np.int64),
+    })
+    net["edge_weight"] = np.int64(1)
+    return net
 
-    pop_export = os.path.join(path, "pop_export")
-    starsim_dir = os.path.join(pop_export, "starsim")
+
+def _save_network(name, path, net, edge_weight):
+    """Save one layer's edge list to CSV with the requested edge_weight."""
+    _, out = _LAYERS[name]
+    starsim_dir = os.path.join(path, "pop_export", "starsim")
     os.makedirs(starsim_dir, exist_ok=True)
 
-    layers = (("homenet", "hh", "net_h"), ("schoolnet", "sch", "net_s"),
-              ("worknet", "wp", "net_w"), ("gqnet", "gq", "net_g"))
+    # The default weight is written as the integer 1 already in the dataframe,
+    # so a default call's csv is unchanged from before edge_weight was saved.
+    if edge_weight != 1.0:
+        net = net.assign(edge_weight=edge_weight)
+    net.to_csv(os.path.join(starsim_dir, f"{out}.csv"), index=False)
 
-    nets = {name: new_layer(os.path.join(pop_export, f"adj_upper_triang_{tag}.mtx"))
-            for name, tag, _ in layers}
-
-    # For plotting/visualization: treat undirected layers as having ~50/50 endpoint
-    # ordering, so plots reading (p1_age, p2_age) as ordered are not triangular.
-    flip_rng = np.random.default_rng(flip_seed)
-    nets = {name: _random_flip_undirected_edges_df(nets[name], flip_rng)
-            for name, _, _ in layers}
-
-    for name, _, out in layers:
-        nets[name].to_csv(os.path.join(starsim_dir, f"{out}.csv"), index=False)
-
-    print("Network csv files created and saved successfully")
-    return nets
+    print(f"Network csv file {out}.csv created and saved successfully (edge_weight={edge_weight:g})")
 
 
 # ---------------------------------------------------------------------------
@@ -398,15 +358,13 @@ def people(config_dict=None, config_path=None, base_dir=None, path=None):
 
 
 def network(name, edge_weight=1.0, csv_path=None, network_df=None, p1_col='p1', p2_col='p2', beta_col=None,
-              path=None, random_seed=None):
+              path=None):
     """Build one of the built-in networks for a population.
 
     Args:
         path: population directory (the one holding pop_export/). Defaults
             to the package config's path. Pass the same value used for
             people() to guarantee the two read the same population.
-        random_seed: seed for the undirected-edge flip; defaults to the
-            package config's random_seed.
     """
     return _GPNetwork(
         name=name,
@@ -417,7 +375,6 @@ def network(name, edge_weight=1.0, csv_path=None, network_df=None, p1_col='p1', 
         p2_col=p2_col,
         beta_col=beta_col,
         path=path,
-        random_seed=random_seed,
     )
 
 

@@ -61,6 +61,10 @@ def compute_decennial_year(main_year):
         return 2010
 
 
+# Parameters with their own keyword argument in write_config()
+NAMED_PARS = ("census_api_key", "main_year", "geos", "commute_states", "use_pums", "path", "julia_env_path")
+
+
 def update_config_values(config,
                          census_api_key=None,
                          main_year=None,
@@ -68,7 +72,17 @@ def update_config_values(config,
                          commute_states=None,
                          use_pums=None,
                          path=None,
-                         julia_env_path=None):
+                         julia_env_path=None,
+                         pars=None):
+    # Any other key in pars overrides the config value of the same name. Check
+    # these first so a misspelled key raises before config is changed.
+    extra = {k: v for k, v in (pars or {}).items() if k not in NAMED_PARS and k != "config_dict"}
+    unknown = sorted(k for k in extra if k not in config)
+    if unknown:
+        raise ValueError(
+            f"Unknown parameter(s) in pars: {unknown}. Valid parameters are: {sorted(config)}"
+        )
+
     # Fall back to environment variables for sensitive/user-specific values
     if census_api_key is None:
         census_api_key = os.environ.get("CENSUS_API_KEY")
@@ -90,6 +104,10 @@ def update_config_values(config,
         config["path"] = path
     if julia_env_path is not None:
         config["julia_env_path"] = julia_env_path
+    # Applied last, so an explicit decennial_year wins over the derived one
+    for k, v in extra.items():
+        if v is not None:
+            config[k] = v
     return config
 
 
@@ -103,6 +121,11 @@ def write_config(census_api_key=None,
                   pars=None,
                   config_dict=None,
                   base_dir=None):
+    if isinstance(census_api_key, dict):
+        raise TypeError(
+            "write_config() got a dictionary as its first argument. "
+            "Pass the parameter dictionary by keyword: write_config(pars=...)"
+        )
     pars = pars or {}
     base_dir = base_dir if base_dir is not None else BASE_DIR
     # Load base template from the package directory unless a dict is provided
@@ -140,6 +163,7 @@ def write_config(census_api_key=None,
         use_pums=overrides["use_pums"],
         path=overrides["path"],
         julia_env_path=overrides["julia_env_path"],
+        pars=pars,
     )
     # User output path may include secrets for local runs; package template never should.
     if os.path.abspath(save_path) != os.path.abspath(template_config_path):

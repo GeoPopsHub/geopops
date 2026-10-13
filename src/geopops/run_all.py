@@ -50,6 +50,7 @@ def _build_effective_config(config_dict=None, pars=None, base_dir=None):
             use_pums=pars.get("use_pums"),
             path=pars.get("path"),
             julia_env_path=pars.get("julia_env_path"),
+            pars=pars,
         )
     # Backfill required table-code keys when config templates are minimal.
     config.setdefault("acs_required", DEFAULT_ACS_REQUIRED.copy())
@@ -66,8 +67,9 @@ def run_all(config=None, pars=None, base_dir=None, random_seed=None, verbose=1):
     Args:
         config (dict, optional): A complete config dict, used as-is. If not
             provided, loads via load_config(base_dir) and applies `pars`.
-        pars (dict, optional): Partial overrides (census_api_key, main_year,
-            geos, commute_states, use_pums, path, julia_env_path).
+        pars (dict, optional): Partial overrides. Any key already in the
+            config can be set (e.g. path, geos, main_year, school_K, netw_B);
+            a key that is not in the config raises ValueError.
         base_dir (str, optional): Base directory for relative paths.
         random_seed (int, optional): Master seed for population generation.
             Takes precedence over config["random_seed"], matching Population.
