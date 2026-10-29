@@ -1,10 +1,9 @@
 GeoPops
-Copyright (C) 2026 Johns Hopkins University
+Copyright (c) 2026 Johns Hopkins University
+Copyright (c) 2023 Alexander Tulchinsky
 
-GeoPops is free software: you can redistribute it and/or modify it under the
-terms of the GNU Affero General Public License as published by the Free
-Software Foundation, either version 3 of the License, or (at your option) any
-later version. See the LICENSE file for the full text.
+GeoPops is licensed under the Clear BSD License (BSD-3-Clause-Clear). See the
+LICENSE file for the full text.
 
 This file records the third-party origins of parts of this software.
 
@@ -15,13 +14,25 @@ GREASYPOP-CO
 
 GeoPops is a successor to GREASYPOP-CO and credits it as its predecessor.
 
-    Copyright 2023 Alexander Tulchinsky
-    Licensed under the GNU Affero General Public License, version 3 or later.
+    Copyright (c) 2023 Alexander Tulchinsky
+    Licensed under the Clear BSD License (BSD-3-Clause-Clear).
 
-src/geopops/process_data.py is derived from GREASYPOP-CO's census data
-processing code and retains its original copyright and license notice. Because
-that code is licensed under AGPL-3.0-or-later, GeoPops as a whole is
-distributed under the same terms.
+The following files in src/geopops/ are derived from GREASYPOP-CO and retain
+its copyright notice:
+
+    co.py
+    export.py
+    generate_pop.py
+    households.py
+    julia.py
+    networks.py
+    process_data.py
+    schools.py
+    utils.py
+    workplaces.py
+
+The Julia files in src/geopops/julia/ are GREASYPOP-CO's original code,
+included unmodified.
 
 Alexander Tulchinsky is a collaborator on GeoPops.
 
@@ -35,9 +46,8 @@ from the third-party `ipfn` package, modified so that it works for this
 workflow. GeoPops inherited the modified file unchanged from GREASYPOP-CO; the
 modifications are Alexander Tulchinsky's.
 
-That file stays under its own MIT terms. Including MIT-licensed code in an
-AGPL-licensed work is permitted; the combined distribution is
-AGPL-3.0-or-later.
+That file stays under its own MIT terms. The MIT License is compatible with
+the Clear BSD License that covers the rest of GeoPops.
 
 Upstream: https://github.com/Dirguis/ipfn
 
