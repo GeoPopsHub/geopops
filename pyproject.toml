@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geopops"
-version = "0.2.2"
+version = "0.2.3"
 description = "GeoPops"
 readme = "README.md"
 license = "BSD-3-Clause-Clear"
@@ -27,7 +27,7 @@ dependencies = [
   "sciris",
   "scipy",
   "shapely",
-  "starsim>=3.0.3",
+  "starsim>=3.0.3,<4",
   "urllib3>=2.5.0",
 ]
 
