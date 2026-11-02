@@ -1,18 +1,16 @@
 {
-    "path": "data",
+    "path": "data_2019",
     "census_api_key": null,
     "julia_env_path": null,
     "main_year": 2019,
     "geos": [
-        "45083"
+        "24"
     ],
     "commute_states": [
-        "45",
-        "37"
+        "24"
     ],
     "use_pums": [
-        "45",
-        "37"
+        "24"
     ],
     "decennial_year": 2010,
     "acs_required": [

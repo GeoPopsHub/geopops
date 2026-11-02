@@ -132,8 +132,20 @@ def read_cbp(counties):
     cbp_dtype = {'fipstate':str,'fipscty':str,'naics':str,'emp':"Int64",'est':"Int64",
         'n1_4':"Int64",'n5_9':"Int64",'n10_19':"Int64",'n20_49':"Int64",'n50_99':"Int64",'n100_249':"Int64",
         'n250_499':"Int64",'n500_999':"Int64",'n1000_1':"Int64",'n1000_2':"Int64",'n1000_3':"Int64",'n1000_4':"Int64"}
-    cbp_US = pd.read_csv(glob(os.path.join(OUTPUT_DIR, "work", "cbp*co.[z|t|c]??"))[0],
+    cbp_dtype_new = {'fipstate':str,'fipscty':str,'naics':str,'emp':"Int64",'est':"Int64",
+                 'n<5':"Int64",'n5_9':"Int64",'n10_19':"Int64",'n20_49':"Int64",'n50_99':"Int64",'n100_249'     :"Int64",
+                 'n250_499':"Int64",'n500_999':"Int64",'n1000_1':"Int64",'n1000_2':"Int64",'n1000_3':"Int64"     ,'n1000_4':"Int64"}
+    try:
+        # try the 2016 and earlier column mapping first
+        cbp_US = pd.read_csv(glob(os.path.join(OUTPUT_DIR, "work", "cbp*co.[z|t|c]??"))[0],
                         usecols=list(cbp_dtype.keys()),dtype=cbp_dtype)
+    except:
+        # if that doesn't work, try the post-2016 column mapping
+        # if there is still an error with this section of the code, might be a third column mapping
+        cbp_US = pd.read_csv(glob(os.path.join(OUTPUT_DIR, "work", "cbp*co.[z|t|c]??"))[0],
+                             usecols=list(cbp_dtype_new.keys()),dtype=cbp_dtype_new,
+                             na_values=['N'])
+        cbp_US.mask(cbp_US.isna(), 0, inplace=True)
     cbp_US['county'] = cbp_US['fipstate'] + cbp_US['fipscty']
     ## this counts employees, regardless of state of residence
     ## incomplete, but we're only using it to estimate avg employer sizes
