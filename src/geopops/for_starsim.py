@@ -263,8 +263,27 @@ def _load_config(config_dict=None, config_path=None, base_dir=None):
         return json.load(f)
 
 
+def _fill_sex(female):
+    """Return sex as booleans, drawing the missing values at the observed share.
+
+    Group-quarters residents have no sex in the export, and Starsim's `female`
+    is a boolean state, where a NaN would silently become True. The fixed seed
+    means a population always exports the same way.
+    """
+    female = np.asarray(female, dtype=float)
+    missing = np.isnan(female)
+    filled = female == 1
+    filled[missing] = np.random.default_rng(0).random(missing.sum()) < np.nanmean(female)
+    return filled
+
+
 def people(config_dict=None, config_path=None, base_dir=None, path=None):
     """Create and return a Starsim People object directly.
+
+    The People get their values when a sim initializes them, so read them from
+    `sim.people` rather than from the returned object. Agents with no recorded
+    age keep a NaN age, and those with no recorded sex get a random one (see
+    `_fill_sex`).
 
     Args:
         path: population directory (the one holding pop_export/). Overrides
@@ -316,41 +335,32 @@ def people(config_dict=None, config_path=None, base_dir=None, path=None):
                      'commuter_income_category', 'commuter_workplace_category', 'sch_grade', 'sch_code']]
     ppl_df.to_csv(f'{path}/pop_export/people_all.csv', index=False)
 
-    age = ss.FloatArr('age', default=ss.BaseArr(ppl_df['age'].values))
-    agegroup = ss.FloatArr('agegroup', default=ss.BaseArr(ppl_df['agegroup'].values))
-    female = ss.FloatArr('female', default=ss.BaseArr(ppl_df['female'].values))
+    agegroup = ss.FloatArr('agegroup', default=ppl_df['agegroup'].values)
     race_trait_states = [
-        ss.FloatArr(col, default=ss.BaseArr(ppl_df[col].values)) for col in race_trait_cols
+        ss.FloatArr(col, default=ppl_df[col].values) for col in race_trait_cols
     ]
-    state = ss.IntArr('state', default=ss.BaseArr(ppl_df['state'].values))
-    county = ss.IntArr('county', default=ss.BaseArr(ppl_df['county'].values))
-    tract = ss.IntArr('tract', default=ss.BaseArr(ppl_df['tract'].values))
-    cbg_geocode = ss.IntArr('cbg_geocode', default=ss.BaseArr(ppl_df['cbg_geocode'].values))
-    household = ss.IntArr('household', default=ss.BaseArr(ppl_df['household'].values))
-    commuter = ss.FloatArr('commuter', default=ss.BaseArr(ppl_df['commuter'].values))
+    state = ss.IntArr('state', default=ppl_df['state'].values)
+    county = ss.IntArr('county', default=ppl_df['county'].values)
+    tract = ss.IntArr('tract', default=ppl_df['tract'].values)
+    cbg_geocode = ss.IntArr('cbg_geocode', default=ppl_df['cbg_geocode'].values)
+    household = ss.IntArr('household', default=ppl_df['household'].values)
+    commuter = ss.FloatArr('commuter', default=ppl_df['commuter'].values)
     commuter_income_category = ss.FloatArr(
-        'commuter_income_category', default=ss.BaseArr(ppl_df['commuter_income_category'].values)
+        'commuter_income_category', default=ppl_df['commuter_income_category'].values
     )
     commuter_workplace_category = ss.FloatArr(
-        'commuter_workplace_category', default=ss.BaseArr(ppl_df['commuter_workplace_category'].values)
+        'commuter_workplace_category', default=ppl_df['commuter_workplace_category'].values
     )
-    sch_code = ss.IntArr('sch_code', default=ss.BaseArr(ppl_df['sch_code'].values))
+    sch_code = ss.IntArr('sch_code', default=ppl_df['sch_code'].values)
 
     ppl = ss.People(n_agents=len(ppl_df), extra_states=[
         agegroup, *race_trait_states, state, county, tract, cbg_geocode,
         household, commuter, commuter_income_category, commuter_workplace_category, sch_code
     ])
 
-    ppl.states.append(age, overwrite=True)
-    setattr(ppl, age.name, age)
-    age.link_people(ppl)
+    ppl.age.default = ppl_df['age'].values
+    ppl.female.default = _fill_sex(ppl_df['female'].values)
 
-    ppl.states.append(female, overwrite=True)
-    setattr(ppl, female.name, female)
-    female.link_people(ppl)
-
-    sim = ss.Sim(people=ppl).init()
-    _ = sim  # keep side-effect parity with previous implementation
     os.makedirs(f'{path}/pop_export/starsim', exist_ok=True)
     ss.save(f'{path}/pop_export/starsim/ppl.pkl', ppl)
     print("Starsim People object created and saved successfully")
@@ -379,4 +389,13 @@ def network(name, edge_weight=1.0, csv_path=None, network_df=None, p1_col='p1', 
 
 
 def subgroup_tracking(subgroup, outcome, name=None, state_id=None, *args, **kwargs):
+    """Count agents with an outcome by subgroup at each time point, from the start of the run.
+
+    Args:
+        subgroup: name of a People state, e.g. 'agegroup'
+        outcome: name of a state of the first disease: 'I' for a declared disease
+            such as `ss.SIS`, 'infected' for one written as code
+        name: the analyzer's name
+        state_id: if given, count only agents with this state FIPS code
+    """
     return _SubgroupTracking(subgroup, outcome, name=name, state_id=state_id, *args, **kwargs)
