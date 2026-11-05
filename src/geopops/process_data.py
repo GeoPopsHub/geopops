@@ -1,15 +1,11 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Johns Hopkins University
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Copyright (c) 2026 Johns Hopkins University
+# Copyright (c) 2023 Alexander Tulchinsky
 '''
-Copyright 2023 Alexander Tulchinsky
+Derived from GREASYPOP-CO's census data processing code
+(https://github.com/CDDEP-DC/GREASYPOP-CO).
 
-This file is part of Greasypop.
-
-Greasypop is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-Greasypop is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License along with Greasypop. If not, see <https://www.gnu.org/licenses/>.
+Licensed under the Clear BSD License. See the LICENSE file for the full text.
 '''
 
 import pandas as pd

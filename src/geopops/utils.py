@@ -1,5 +1,6 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Johns Hopkins University
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Copyright (c) 2026 Johns Hopkins University
+# Copyright (c) 2023 Alexander Tulchinsky
 """
 Data structures and utility functions for GeoPops synthetic population generation.
 Translated from julia/utils.jl.

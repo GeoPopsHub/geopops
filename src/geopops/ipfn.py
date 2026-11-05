@@ -7,9 +7,8 @@
 # Alexander Tulchinsky so that it works for this workflow. GeoPops inherited
 # the modified file unchanged from GREASYPOP-CO.
 #
-# It stays under its own MIT terms rather than the AGPL that covers the rest of
-# GeoPops; including MIT-licensed code in an AGPL work is permitted, and the
-# combined distribution is AGPL-3.0-or-later.
+# It stays under its own MIT terms rather than the Clear BSD License that
+# covers the rest of GeoPops; the two licenses are compatible.
 #
 # Upstream: https://github.com/Dirguis/ipfn
 #

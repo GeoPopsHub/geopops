@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Johns Hopkins University
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Copyright (c) 2026 Johns Hopkins University
 import os
 import json
 import pandas as pd
@@ -409,10 +409,10 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
         dec_source_url = f"https://api.census.gov/data/{year_DEC}/dec/sf1"
     for state_i in state_fips:
         # Process ACS table codes
-        # Note: no 2023 data for B09019/B09020/B09021
-        # so we need to use 2022 data for these tables if year_ACS is 2023
-    
-        # Effective vintage: use 2022 for B09019/B09020/B09021 when year_ACS is 2023 (no 2023 data)
+        # Note: no 2023 or 2024 block group data for B09019/B09020/B09021
+        # so we need to use 2022 data for these tables if year_ACS is 2023 or 2024
+
+        # Effective vintage: use 2022 for B09019/B09020/B09021 when year_ACS is 2023 or 2024 (no block group data)
         missing_years = {2023, 2024}
         FALLBACK_2022_CODES = {'B09019', 'B09020', 'B09021'}
         def _effective_acs_year(code, year_ACS):
