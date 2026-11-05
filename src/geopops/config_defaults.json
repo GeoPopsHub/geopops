@@ -1,0 +1,113 @@
+{
+    "path": "data",
+    "census_api_key": null,
+    "julia_env_path": null,
+    "main_year": 2019,
+    "geos": [
+        "45083"
+    ],
+    "commute_states": [
+        "45",
+        "37"
+    ],
+    "use_pums": [
+        "45",
+        "37"
+    ],
+    "decennial_year": 2010,
+    "acs_required": [
+        "B01001",
+        "B09019",
+        "B09020",
+        "C24030",
+        "B23025",
+        "C24010",
+        "B11016",
+        "B11012",
+        "B23009",
+        "B11004",
+        "B19001",
+        "B22010",
+        "B09021",
+        "B09018",
+        "B11001H",
+        "B11001I",
+        "B25006"
+    ],
+    "dec_required": [
+        "P43",
+        "P18"
+    ],
+    "inc_adj": 1.010145,
+    "inc_cats": [
+        "q1_1",
+        "q1_2",
+        "q1_3",
+        "q2",
+        "q3",
+        "q4",
+        "q5"
+    ],
+    "inc_cols": [
+        [
+            "Less than $10,000"
+        ],
+        [
+            "$10,000 to $14,999",
+            "$15,000 to $19,999",
+            "$20,000 to $24,999"
+        ],
+        [
+            "$25,000 to $29,999",
+            "$30,000 to $34,999",
+            "$35,000 to $39,999"
+        ],
+        [
+            "$40,000 to $44,999",
+            "$45,000 to $49,999",
+            "$50,000 to $59,999",
+            "$60,000 to $74,999"
+        ],
+        [
+            "$75,000 to $99,999",
+            "$100,000 to $124,999"
+        ],
+        [
+            "$125,000 to $149,999",
+            "$150,000 to $199,999"
+        ],
+        [
+            "$200,000 or more"
+        ]
+    ],
+    "additional_traits": [
+        "sch_public",
+        "sch_private",
+        "female",
+        "race_white_alone",
+        "race_black_alone",
+        "race_amerindian_or_alaskan",
+        "race_asian_alone",
+        "race_pacific_alone",
+        "race_other_alone",
+        "race_two_or_more",
+        "hispanic"
+    ],
+    "LODES_annual_income_boundary": 40000,
+    "income_associativity_coefficient": 0.9,
+    "school_associativity_coefficient": 0.9,
+    "inst_res_per_worker": 10,
+    "noninst_res_per_worker": 50,
+    "min_gq_workers": 2,
+    "min_gq_residents": 20,
+    "n_closest_schools": 4,
+    "p_closest_school": 0.9,
+    "CO_crit_val": 15.0,
+    "CO_cooldown": 0.99,
+    "CO_maxgens": 200000,
+    "workplace_K": 8,
+    "school_K": 12,
+    "gq_K": 12,
+    "netw_K": 8,
+    "netw_B": 0.25
+}

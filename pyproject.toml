@@ -41,4 +41,4 @@ where = ["src"]
 
 # patterns are relative to the *package root* (src/geopops)
 [tool.setuptools.package-data]
-geopops = ["geocorr/*", "julia/*", "config.json"]
+geopops = ["geocorr/*", "julia/*", "config_defaults.json"]
