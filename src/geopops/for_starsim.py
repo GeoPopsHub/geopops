@@ -33,7 +33,6 @@ _NET_SAVED = {}
 class _SubgroupTracking(ss.Analyzer):
     def __init__(self, subgroup, outcome, name=None, state_id=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.has_product = False
         self.subgroup = subgroup
         self.outcome = outcome
         self.state_id = state_id
@@ -41,28 +40,22 @@ class _SubgroupTracking(ss.Analyzer):
         if name:
             self.name = name
 
-    def step(self):
-        sim = self.sim
+    def init_post(self):
+        super().init_post()
+        groups = np.unique(self.sim.people[self.subgroup])
+        self.n_outcome = {group: [] for group in groups}
 
-        if not self.n_outcome:
-            groups = np.unique(sim.people[self.subgroup])
-            self.n_outcome = {group: [] for group in groups}
-
-        disease_name = sim.diseases[0].name.lower()
-        disease_obj = getattr(sim.people, disease_name, None)
-
-        for group in self.n_outcome.keys():
-            if self.state_id is not None:
-                count = len(
-                    ss.uids(
-                        (sim.people[self.subgroup] == group)
-                        & (disease_obj[self.outcome] == 1)
-                        & (sim.people.state == self.state_id)
-                    )
-                )
-            else:
-                count = len(ss.uids((sim.people[self.subgroup] == group) & (disease_obj[self.outcome] == 1)))
-            self.n_outcome[group].append(count)
+    def record_stocks(self):
+        """Count at the start of each step, so t_0 is the state the run starts from."""
+        super().record_stocks()
+        people = self.sim.people
+        has_outcome = self.sim.diseases[0][self.outcome]
+        if self.state_id is not None:
+            has_outcome = has_outcome & (people.state == self.state_id)
+        values = people[self.subgroup]
+        for group, counts in self.n_outcome.items():
+            in_group = np.isnan(values) if group != group else values == group # NaN is agents with no value (e.g. no age)
+            counts.append(np.count_nonzero(has_outcome & in_group))
 
     def get_subgroup_data(self):
         """Return a DataFrame where rows are subgroups and columns are time steps."""
@@ -263,8 +256,27 @@ def _load_config(config_dict=None, config_path=None, base_dir=None):
         return json.load(f)
 
 
+def _fill_sex(female):
+    """Return sex as booleans, drawing the missing values at the observed share.
+
+    Group-quarters residents have no sex in the export, and Starsim's `female`
+    is a boolean state, where a NaN would silently become True. The fixed seed
+    means a population always exports the same way.
+    """
+    female = np.asarray(female, dtype=float)
+    missing = np.isnan(female)
+    filled = female == 1
+    filled[missing] = np.random.default_rng(0).random(missing.sum()) < np.nanmean(female)
+    return filled
+
+
 def people(config_dict=None, config_path=None, base_dir=None, path=None):
     """Create and return a Starsim People object directly.
+
+    The People get their values when a sim initializes them, so read them from
+    `sim.people` rather than from the returned object. Agents with no recorded
+    age keep a NaN age, and those with no recorded sex get a random one (see
+    `_fill_sex`).
 
     Args:
         path: population directory (the one holding pop_export/). Overrides
@@ -286,10 +298,15 @@ def people(config_dict=None, config_path=None, base_dir=None, path=None):
 
     cbg_idxs = pd.read_csv(f'{path}/pop_export/cbg_idxs.csv')
     ppl_df = ppl_df.merge(cbg_idxs, on='cbg_id', how='left')
-    ppl_df['state'] = ppl_df['cbg_geocode'].astype(str).str[:2].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
-    ppl_df['county'] = ppl_df['cbg_geocode'].astype(str).str[:5].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
-    ppl_df['tract'] = ppl_df['cbg_geocode'].astype(str).str[:11].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
-    ppl_df['cbg_geocode'] = ppl_df['cbg_geocode'].astype(str).str[:12].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
+    # A geocode is SSCCCTTTTTTB (state, county, tract, block group), saved as a
+    # number, so a state below 10 has lost its leading zero: take the parts by
+    # arithmetic rather than by slicing the string. Agents with no block group
+    # (group quarters) get 0.
+    geocode = pd.to_numeric(ppl_df['cbg_geocode']).fillna(0)
+    ppl_df['state'] = geocode // 10**10
+    ppl_df['county'] = geocode // 10**7
+    ppl_df['tract'] = geocode // 10
+    ppl_df['cbg_geocode'] = geocode
     ppl_df.loc[(ppl_df['age'] >= 0) & (~ppl_df['age'].isnull()), 'agegroup'] = 0.0
     ppl_df.loc[(ppl_df['age'] >= 10) & (~ppl_df['age'].isnull()), 'agegroup'] = 1.0
     ppl_df.loc[(ppl_df['age'] >= 20) & (~ppl_df['age'].isnull()), 'agegroup'] = 2.0
@@ -316,41 +333,32 @@ def people(config_dict=None, config_path=None, base_dir=None, path=None):
                      'commuter_income_category', 'commuter_workplace_category', 'sch_grade', 'sch_code']]
     ppl_df.to_csv(f'{path}/pop_export/people_all.csv', index=False)
 
-    age = ss.FloatArr('age', default=ss.BaseArr(ppl_df['age'].values))
-    agegroup = ss.FloatArr('agegroup', default=ss.BaseArr(ppl_df['agegroup'].values))
-    female = ss.FloatArr('female', default=ss.BaseArr(ppl_df['female'].values))
+    agegroup = ss.FloatArr('agegroup', default=ppl_df['agegroup'].values)
     race_trait_states = [
-        ss.FloatArr(col, default=ss.BaseArr(ppl_df[col].values)) for col in race_trait_cols
+        ss.FloatArr(col, default=ppl_df[col].values) for col in race_trait_cols
     ]
-    state = ss.IntArr('state', default=ss.BaseArr(ppl_df['state'].values))
-    county = ss.IntArr('county', default=ss.BaseArr(ppl_df['county'].values))
-    tract = ss.IntArr('tract', default=ss.BaseArr(ppl_df['tract'].values))
-    cbg_geocode = ss.IntArr('cbg_geocode', default=ss.BaseArr(ppl_df['cbg_geocode'].values))
-    household = ss.IntArr('household', default=ss.BaseArr(ppl_df['household'].values))
-    commuter = ss.FloatArr('commuter', default=ss.BaseArr(ppl_df['commuter'].values))
+    state = ss.IntArr('state', default=ppl_df['state'].values)
+    county = ss.IntArr('county', default=ppl_df['county'].values)
+    tract = ss.IntArr('tract', default=ppl_df['tract'].values)
+    cbg_geocode = ss.IntArr('cbg_geocode', default=ppl_df['cbg_geocode'].values)
+    household = ss.IntArr('household', default=ppl_df['household'].values)
+    commuter = ss.FloatArr('commuter', default=ppl_df['commuter'].values)
     commuter_income_category = ss.FloatArr(
-        'commuter_income_category', default=ss.BaseArr(ppl_df['commuter_income_category'].values)
+        'commuter_income_category', default=ppl_df['commuter_income_category'].values
     )
     commuter_workplace_category = ss.FloatArr(
-        'commuter_workplace_category', default=ss.BaseArr(ppl_df['commuter_workplace_category'].values)
+        'commuter_workplace_category', default=ppl_df['commuter_workplace_category'].values
     )
-    sch_code = ss.IntArr('sch_code', default=ss.BaseArr(ppl_df['sch_code'].values))
+    sch_code = ss.IntArr('sch_code', default=ppl_df['sch_code'].values)
 
     ppl = ss.People(n_agents=len(ppl_df), extra_states=[
         agegroup, *race_trait_states, state, county, tract, cbg_geocode,
         household, commuter, commuter_income_category, commuter_workplace_category, sch_code
     ])
 
-    ppl.states.append(age, overwrite=True)
-    setattr(ppl, age.name, age)
-    age.link_people(ppl)
+    ppl.age.default = ppl_df['age'].values
+    ppl.female.default = _fill_sex(ppl_df['female'].values)
 
-    ppl.states.append(female, overwrite=True)
-    setattr(ppl, female.name, female)
-    female.link_people(ppl)
-
-    sim = ss.Sim(people=ppl).init()
-    _ = sim  # keep side-effect parity with previous implementation
     os.makedirs(f'{path}/pop_export/starsim', exist_ok=True)
     ss.save(f'{path}/pop_export/starsim/ppl.pkl', ppl)
     print("Starsim People object created and saved successfully")
@@ -379,4 +387,13 @@ def network(name, edge_weight=1.0, csv_path=None, network_df=None, p1_col='p1', 
 
 
 def subgroup_tracking(subgroup, outcome, name=None, state_id=None, *args, **kwargs):
+    """Count agents with an outcome by subgroup at each time point, from the start of the run.
+
+    Args:
+        subgroup: name of a People state, e.g. 'agegroup'
+        outcome: name of a state of the first disease: 'I' for a declared disease
+            such as `ss.SIS`, 'infected' for one written as code
+        name: the analyzer's name
+        state_id: if given, count only agents with this state FIPS code
+    """
     return _SubgroupTracking(subgroup, outcome, name=name, state_id=state_id, *args, **kwargs)
