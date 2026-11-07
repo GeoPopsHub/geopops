@@ -27,7 +27,7 @@ dependencies = [
   "sciris",
   "scipy",
   "shapely",
-  "starsim>=4.0.0rc1",
+  "starsim>=4.0.0rc3",
   "urllib3>=2.5.0",
 ]
 

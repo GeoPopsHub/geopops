@@ -33,7 +33,6 @@ _NET_SAVED = {}
 class _SubgroupTracking(ss.Analyzer):
     def __init__(self, subgroup, outcome, name=None, state_id=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.has_product = False
         self.subgroup = subgroup
         self.outcome = outcome
         self.state_id = state_id
@@ -41,28 +40,22 @@ class _SubgroupTracking(ss.Analyzer):
         if name:
             self.name = name
 
-    def step(self):
-        sim = self.sim
+    def init_post(self):
+        super().init_post()
+        groups = np.unique(self.sim.people[self.subgroup])
+        self.n_outcome = {group: [] for group in groups}
 
-        if not self.n_outcome:
-            groups = np.unique(sim.people[self.subgroup])
-            self.n_outcome = {group: [] for group in groups}
-
-        disease_name = sim.diseases[0].name.lower()
-        disease_obj = getattr(sim.people, disease_name, None)
-
-        for group in self.n_outcome.keys():
-            if self.state_id is not None:
-                count = len(
-                    ss.uids(
-                        (sim.people[self.subgroup] == group)
-                        & (disease_obj[self.outcome] == 1)
-                        & (sim.people.state == self.state_id)
-                    )
-                )
-            else:
-                count = len(ss.uids((sim.people[self.subgroup] == group) & (disease_obj[self.outcome] == 1)))
-            self.n_outcome[group].append(count)
+    def record_stocks(self):
+        """Count at the start of each step, so t_0 is the state the run starts from."""
+        super().record_stocks()
+        people = self.sim.people
+        has_outcome = self.sim.diseases[0][self.outcome]
+        if self.state_id is not None:
+            has_outcome = has_outcome & (people.state == self.state_id)
+        values = people[self.subgroup]
+        for group, counts in self.n_outcome.items():
+            in_group = np.isnan(values) if group != group else values == group # NaN is agents with no value (e.g. no age)
+            counts.append(np.count_nonzero(has_outcome & in_group))
 
     def get_subgroup_data(self):
         """Return a DataFrame where rows are subgroups and columns are time steps."""
@@ -305,10 +298,15 @@ def people(config_dict=None, config_path=None, base_dir=None, path=None):
 
     cbg_idxs = pd.read_csv(f'{path}/pop_export/cbg_idxs.csv')
     ppl_df = ppl_df.merge(cbg_idxs, on='cbg_id', how='left')
-    ppl_df['state'] = ppl_df['cbg_geocode'].astype(str).str[:2].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
-    ppl_df['county'] = ppl_df['cbg_geocode'].astype(str).str[:5].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
-    ppl_df['tract'] = ppl_df['cbg_geocode'].astype(str).str[:11].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
-    ppl_df['cbg_geocode'] = ppl_df['cbg_geocode'].astype(str).str[:12].replace({'na': '0.0', 'nan': '0.0'}).astype(float)
+    # A geocode is SSCCCTTTTTTB (state, county, tract, block group), saved as a
+    # number, so a state below 10 has lost its leading zero: take the parts by
+    # arithmetic rather than by slicing the string. Agents with no block group
+    # (group quarters) get 0.
+    geocode = pd.to_numeric(ppl_df['cbg_geocode']).fillna(0)
+    ppl_df['state'] = geocode // 10**10
+    ppl_df['county'] = geocode // 10**7
+    ppl_df['tract'] = geocode // 10
+    ppl_df['cbg_geocode'] = geocode
     ppl_df.loc[(ppl_df['age'] >= 0) & (~ppl_df['age'].isnull()), 'agegroup'] = 0.0
     ppl_df.loc[(ppl_df['age'] >= 10) & (~ppl_df['age'].isnull()), 'agegroup'] = 1.0
     ppl_df.loc[(ppl_df['age'] >= 20) & (~ppl_df['age'].isnull()), 'agegroup'] = 2.0

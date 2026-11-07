@@ -58,6 +58,17 @@ def test_people_values(pop):
         assert np.array_equal(people.female.raw[:N_HOUSEHOLD], np.arange(N_HOUSEHOLD) % 2 == 1)
         assert not people.female.raw[N_HOUSEHOLD:N].all() # A missing sex isn't cast to True
         assert people.state.raw[0] == 24
+        assert (people.state.raw[N_HOUSEHOLD:N] == 0).all() # No block group, so no state
+        assert (people.county.raw[:N_HOUSEHOLD] == 24027).all()
+        assert (people.tract.raw[:N_HOUSEHOLD] == 24027000100).all()
+
+
+def test_leading_zero_state(pop):
+    """A geocode saved as a number loses a leading zero, which mustn't change the state."""
+    pd.DataFrame(dict(cbg_id=[1], cbg_geocode=[10010201001])).to_csv(f'{pop}/pop_export/cbg_idxs.csv', index=False)
+    people = ss.Sim(people=for_starsim.people(path=pop)).init().people
+    assert people.state.raw[0] == 1
+    assert people.county.raw[0] == 1001
 
 
 def test_missing_sex_uses_observed_share():
@@ -80,4 +91,4 @@ def test_tracking(pop, disease, outcome):
     assert [len(net) for net in sim.networks.values()] == [N - 1] * 4
     counts = sim.analyzers.tracker.get_subgroup_data().drop(columns='agegroup')
     assert counts.shape[1] == sim.t.npts
-    assert counts['t_0'].sum() > 0
+    assert counts['t_0'].sum() == sim.diseases[0].results[outcome][0] # The state the run starts from
