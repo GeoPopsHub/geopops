@@ -158,11 +158,11 @@ class _GPNetwork(ss.Network):
         # Honor an explicitly provided scalar edge_weight (e.g., 2.0 for homenet)
         # so users can rescale built-in networks without editing CSV/dataframes.
         if float(self.edge_weight) != 1.0:
-            self.edges.beta = np.full(len(self.network_df), float(self.edge_weight))
+            self.edges.weight = np.full(len(self.network_df), float(self.edge_weight))
         elif 'edge_weight' in self.network_df.columns:
-            self.edges.beta = self.network_df['edge_weight'].values.astype(float)
+            self.edges.weight = self.network_df['edge_weight'].values.astype(float)
         else:
-            self.edges.beta = np.full(len(self.network_df), self.edge_weight)
+            self.edges.weight = np.full(len(self.network_df), self.edge_weight)
         self.validate()
 
     def _network_config(self):
