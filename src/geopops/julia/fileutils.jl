@@ -28,8 +28,12 @@ function ser_path(f::AbstractString,obj::Any)
     return nothing
 end
 
+## ntasks=1: when julia runs with several threads (julia -t N, for the threaded commute matrices),
+## CSV.jl otherwise parses large files in parallel chunks and returns SentinelArrays.ChainedVector
+## columns, which methods typed ::Vector{...} (e.g. generate_workplaces!) don't accept. One task
+## gives the same column types as a single-threaded run.
 function read_df(f::AbstractString; kwargs...)
-    return CSV.read(abspath(f), DataFrame; kwargs...)
+    return CSV.read(abspath(f), DataFrame; ntasks=1, kwargs...)
 end
 
 function write_df(f::AbstractString, df; kwargs...)

@@ -35,6 +35,15 @@ include("fileutils.jl")
         return nothing
     end
 
+    ## summary += samples[add,:] - samples[remove,:]
+    function swap_row!(summary::Matrix{Int64}, samples::Matrix{Int64}, add::Int64, remove::Int64)
+        add == remove && return nothing
+        @inbounds for j in axes(samples, 2)
+            summary[1, j] += samples[add, j] - samples[remove, j]
+        end
+        return nothing
+    end
+
     ## distance functions
     ## note if coming from Numpy: Julia functions do not automatically broadcast over collections
     ## --- must specify that intent using dot-syntax: .+ for operators, f.() for functions
@@ -97,12 +106,16 @@ include("fileutils.jl")
         while !done
             gen += 1
             orig = mutate!(c0, idxs)
-            summarize!(summary, c0, samples)
+            ## a mutation swaps one household, so update the summary by that household's row instead
+            ## of re-summing all n rows (exact: integer counts); the original summarize!() made each
+            ## generation cost n x columns, which dominated CO for large block groups
+            swap_row!(summary, samples, c0[orig[1]], orig[2])
             E1 = FTdist(summary, targ)
             if accept(E0-E1, T)
                 T = sched(gen, T, E0, E1, params[:cooldown])
                 E0 = E1 ## only update the score if we accept, lol
             else
+                swap_row!(summary, samples, orig[2], c0[orig[1]])
                 revert!(c0, orig)
             end
             done = term(gen, E0, T, params[:maxgens], params[:critval], params[:report])
