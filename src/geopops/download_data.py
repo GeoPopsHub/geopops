@@ -121,10 +121,9 @@ def try_download(src, dst):
                 print(f"Download attempt failed: {e}")
                 retries -= 1
                 status = -1
-    
+
     if status != 0:
-        print(f"Download failed: {src}")
-        exit(1)
+        raise RuntimeError(f"Download failed after 3 attempts: {src}")
     
     return status
 
@@ -179,10 +178,9 @@ def try_curl_cffi(src, dst):
             retries -= 1
             status = -1
             time.sleep(2)  # Add a small delay between retries
-    
+
     if status != 0:
-        print(f"Download failed: {src}")
-        exit(1)
+        raise RuntimeError(f"Download failed after 3 attempts: {src}")
     
     return status
 
@@ -244,8 +242,7 @@ def try_download_text(src, dst):
                 status = -1
     
     if status != 0:
-        print(f"Text download failed: {src}")
-        exit(1)
+        raise RuntimeError(f"Text download failed after 3 attempts: {src}")
     
     return status
 
@@ -425,7 +422,15 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
             "table_codes": [f"group({code})" for code in ACS_table_codes],
             "table_name": [f"ACSDT5Y{_effective_acs_year(code, year_ACS)}.{code}-Data" for code in ACS_table_codes],
             "vintage": [_effective_acs_year(code, year_ACS) for code in ACS_table_codes],
-        })   
+        })
+        # process_data.generate_gq subtracts B01001 counts from B09019-B09021 counts, so B01001 is
+        # also needed for the fallback year (B01001 for year_ACS is still downloaded for everything else)
+        if year_ACS in missing_years and FALLBACK_2022_CODES & set(ACS_table_codes) and 'B01001' in ACS_table_codes:
+            table_codes = pd.concat([table_codes, pd.DataFrame({
+                "table_codes": ["group(B01001)"],
+                "table_name": ["ACSDT5Y2022.B01001-Data"],
+                "vintage": [2022],
+            })], ignore_index=True)
     
        
         # table_codes = pd.DataFrame({
