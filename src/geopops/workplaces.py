@@ -88,6 +88,9 @@ def read_workers_by_cat(co_results, data_dir, ind_codes, counties):
                             usecols=['SERIALNO'] + cat_cols, dtype={'SERIALNO': str})
     # Keep HH sample row mapping 1-based for Julia parity.
     hh_idx = dict(zip(hh_samps['SERIALNO'], range(1, len(hh_samps) + 1)))
+    # Category counts as one array (NaN counts as 0), so each CBG is summed in one
+    # numpy call instead of a row lookup per household per category.
+    cat_vals = hh_samps[cat_cols].fillna(0).to_numpy()
 
     workers_by_cat = {k: {} for k in ind_codes}
     for co in counties:
@@ -95,12 +98,9 @@ def read_workers_by_cat(co_results, data_dir, ind_codes, counties):
             continue
         cbg_dict = co_results[co]
         for ori, hhvec in cbg_dict.items():
-            for cat_code, cat_col in zip(ind_codes, cat_cols):
-                total = sum(
-                    hh_samps.iloc[hh_idx[x] - 1][cat_col]
-                    for x in hhvec
-                    if x in hh_idx and pd.notna(hh_samps.iloc[hh_idx[x] - 1][cat_col])
-                )
+            rows = [hh_idx[x] - 1 for x in hhvec if x in hh_idx]
+            totals = cat_vals[rows].sum(axis=0)
+            for cat_code, total in zip(ind_codes, totals):
                 workers_by_cat[cat_code][ori] = int(total)
     return workers_by_cat
 
