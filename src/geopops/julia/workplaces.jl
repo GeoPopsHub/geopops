@@ -172,12 +172,31 @@ function calc_od_counts(cat_codes::Vector{<:AbstractString}, counties::Vector{<:
     for k in cat_codes
         println("  for category ",k)
         M = read_od_matrix(k, n_rows, n_cols);
-        hh_counts = SparseMatrixCSC{UInt32, UInt32}(spzeros(n_rows, n_cols))
-        gq_counts = SparseMatrixCSC{UInt32, UInt32}(spzeros(n_rows, n_cols))
+        ## Each origin's row is rounded on its stored entries and the results are collected as
+        ## triplets, then assembled once. The original assigned rows into a column-compressed
+        ## sparse matrix one at a time (each assignment shifts all later entries) and rounded
+        ## M[rownum,:] over every column; both grow with origins x destinations. Same counts:
+        ## lrRound's sums run over the stored entries either way, and its stable sort keeps
+        ## their relative order, so the same entries get the remainders.
+        Mt = SparseMatrixCSC(transpose(M))   ## column r of Mt = row r of M
+        rv = rowvals(Mt); nzv = nonzeros(Mt)
+        hI = UInt32[]; hJ = UInt32[]; hV = UInt32[]
+        gI = UInt32[]; gJ = UInt32[]; gV = UInt32[]
         for (code, rownum) in origin_idx
-            hh_counts[rownum,:] = lrRound(M[rownum,:] .*  get(hhw_by_cat_x_ori[k],code,0))
-            gq_counts[rownum,:] = lrRound(M[rownum,:] .*  get(gqw_by_cat_x_ori[k],code,0))
+            rng = nzrange(Mt, rownum)
+            isempty(rng) && continue
+            cols = rv[rng]; p = nzv[rng]
+            for (cnt, I, J, V) in ((get(hhw_by_cat_x_ori[k],code,0), hI, hJ, hV),
+                                   (get(gqw_by_cat_x_ori[k],code,0), gI, gJ, gV))
+                r = lrRound(p .* cnt)
+                for (c, x) in zip(cols, r)
+                    x == 0 && continue
+                    push!(I, rownum); push!(J, c); push!(V, x)
+                end
+            end
         end
+        hh_counts = sparse(hI, hJ, hV, n_rows, n_cols)
+        gq_counts = sparse(gI, gJ, gV, n_rows, n_cols)
         ser_path("jlse/od_counts_"*k*".jlse",(hh_counts, gq_counts))
         test_tot += sum(hh_counts) + sum(gq_counts)
     end
@@ -244,6 +263,9 @@ function pull_inst_workers!(count_matrix::Matrix{<:Integer},
     ## for each institution, pull n workers who have a suitable work _destination_
     #test = Dict(k=>[] for k in keys(workers_by_key))
     inst_emp_origins = Dict{Ki,Vector{Ko}}()
+    ## column sums, kept current as workers are drawn (the original recomputed them for every
+    ## institution, a full pass over the origin x destination matrix each time)
+    colsums = vec(sum(count_matrix;dims=1))
     for (inst_id, n) in workers_by_key
         cbg = loc_by_key[inst_id]
         ## find destination(s) with enough workers; try closest cbg first, then wider areas
@@ -254,8 +276,6 @@ function pull_inst_workers!(count_matrix::Matrix{<:Integer},
         ## then make up the remainder from nearby locations
         ## this way, commuters are coming from approximately the right area
         geo_areas = [cbg,cbg[1:11],cbg[1:9],cbg[1:7],cbg[1:5]]
-        ## column sums change on each loop
-        colsums = vec(sum(count_matrix;dims=1))
         ## for each geo area, a list of destination indices (columns) with > 0 workers:
         dest_lists = [filter_dests(i->(colsums[i]>0), geo, dest_idx) for geo in geo_areas]
         ## shuffle each list, but preserve the geo area order:
@@ -267,6 +287,7 @@ function pull_inst_workers!(count_matrix::Matrix{<:Integer},
             #push!(test[inst_id], (col,draw_n))
             ## pass a view of the column so the original matrix gets modified
             append!(o_idxs, drawCounts!(view(count_matrix,:,col), draw_n))
+            colsums[col] -= draw_n
             n = n - draw_n
             if n < 1
                 break
@@ -537,6 +558,26 @@ function generate_jobs_and_workers()
 end
 
 
+## proportion of each industry's workers at one origin going to each destination
+## (moved out of generate_commute_matrices unchanged, so origins can run in parallel)
+function commute_props(ind_margin, d_idxs, d_margin, m_ind_dest_p)
+    ## initial matrix based on p each industry at each destination, while preserving origin-destination counts
+    ## IPF will make it also preserve by-industry counts
+    ## this can be done separately for each origin; overall totals by destination and by industry will be correct
+    preserve_od_vals = (d_margin' .* m_ind_dest_p[:, d_idxs]);
+    ## do IPF; handles zeros poorly, so replace with some small value
+    init_m = max.(preserve_od_vals,0.00001);
+    fac = ipf(init_m, [ind_margin, d_margin], maxiter=500, tol=1e-6);
+    ## result = proportion going to each destination (by industry)
+    new_m = Array(fac) .* init_m
+    new_margin = sum(new_m; dims=2) ## will be same as ind_margin if IPF converged
+    new_m = new_m ./ new_margin
+    ## for industries with 0 workers at this location, still need some kind of commute data
+    ## assume they follow overall proportions from OD counts
+    new_m[isapprox.(vec(new_margin), 0.0), :] .= d_margin' / sum(d_margin)
+    return new_m
+end
+
 ## generate commute matrices by industry using IPF
 ## based on census and LODES data
 ## needed before workplaces can be generated
@@ -564,18 +605,28 @@ function generate_commute_matrices()
         m_ind_dest ./ sum(m_ind_dest; dims=1); ## p ind at each dest
     end;
 
-    ## for storing results
-    res_iod = [spzeros(Float32, length(origin_idxs), length(dest_idxs)) for i in ind_codes];
+    ## Each origin's IPF is independent and uses no random numbers, so origins run on all threads
+    ## (julia -t N). Origins without commute data use rand(), so they are filled afterwards in
+    ## origin order, keeping the random stream (and so the result) the same as the serial loop.
+    ## Results are collected as triplets and assembled once: the original wrote each origin's row
+    ## into column-compressed sparse matrices, which grows with origins x destinations.
+    n_o = length(origin_idxs)
+    fitted = Vector{Union{Nothing,Tuple{Vector{Int},Matrix{Float64}}}}(nothing, n_o)
+    done = Threads.Atomic{Int}(0)
+    Threads.@threads for o in 1:n_o
+        d_idxs, d_margin = findnz(m_dest_ori[:,o])
+        if !isempty(d_idxs)
+            fitted[o] = (d_idxs, commute_props(m_ind_ori[:,o], d_idxs, d_margin, m_ind_dest_p))
+        end
+        k = Threads.atomic_add!(done, 1) + 1
+        k % 1000 == 0 && println(k, "/", n_o)
+    end
 
+    tI = [Int[] for i in ind_codes]; tJ = [Int[] for i in ind_codes]; tV = [Float32[] for i in ind_codes]
     for (o,x) in enumerate(origin_idxs)
-        o % 100 == 0 && println(o, "/", length(origin_idxs))
-
         ## row sum targets = workers in each industry at this origin
         ind_margin = m_ind_ori[:,o]
-        ## column sum targets = workers commuting to each destination from this origin
-        ## only need to consider non-zero columns
-        d_idxs, d_margin = findnz(m_dest_ori[:,o])
-        if isempty(d_idxs)
+        if isnothing(fitted[o])
             ## no commute data exists for this origin; have to make something up
             ## most likely, nobody lives there; show a warning if they do
             sum(ind_margin) > 0 && println("warning: no commute data for ",x,", ",sum(ind_margin)," workers affected")
@@ -585,26 +636,16 @@ function generate_commute_matrices()
                                     rand(first_nonempty([findall(x->x[1:5]==origin_idxs[o][1:5], dest_idxs)
                                                         ,findall(x->true, dest_idxs)])))]
         else
-            ## initial matrix based on p each industry at each destination, while preserving origin-destination counts
-            ## IPF will make it also preserve by-industry counts
-            ## this can be done separately for each origin; overall totals by destination and by industry will be correct
-            preserve_od_vals = (d_margin' .* m_ind_dest_p[:, d_idxs]);
-            ## do IPF; handles zeros poorly, so replace with some small value
-            init_m = max.(preserve_od_vals,0.00001);
-            fac = ipf(init_m, [ind_margin, d_margin], maxiter=500, tol=1e-6);
-            ## result = proportion going to each destination (by industry)
-            new_m = Array(fac) .* init_m 
-            new_margin = sum(new_m; dims=2) ## will be same as ind_margin if IPF converged
-            new_m = new_m ./ new_margin
-            ## for industries with 0 workers at this location, still need some kind of commute data
-            ## assume they follow overall proportions from OD counts
-            new_m[isapprox.(vec(new_margin), 0.0), :] .= d_margin' / sum(d_margin)
+            d_idxs, new_m = fitted[o]
         end
         ## store results
-        for (i,c) in enumerate(ind_codes)
-            res_iod[i][o,d_idxs] .= new_m[i,:]
+        for i in eachindex(ind_codes), (j, d) in enumerate(d_idxs)
+            v = Float32(new_m[i,j])
+            v == 0 && continue          ## the original's sparse assignment stores no zeros
+            push!(tI[i], o); push!(tJ[i], d); push!(tV[i], v)
         end
     end
+    res_iod = [sparse(tI[i], tJ[i], tV[i], n_o, length(dest_idxs)) for i in eachindex(ind_codes)]
 
     println("writing commute matrices")
     write_df("processed/od_rows_origins.csv", DataFrame(:idx=>eachindex(origin_idxs),:origin=>origin_idxs))

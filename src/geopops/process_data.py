@@ -51,6 +51,21 @@ def lrRound(v):
         vrnd[vidxs[i]] += 1    
     return vrnd
 
+## True where a code starts with any of the prefixes in geos. Same result as
+##   np.any([codes.str.startswith(g) for g in geos], axis=0)
+## but one vectorized lookup per prefix length instead of a pass over all codes per prefix
+## (a region with hundreds of tract-level geos and tens of millions of LODES rows made
+## that the slowest part of processing).
+def prefix_mask(codes, geos):
+    codes = pd.Series(np.asarray(codes, dtype=object)).astype(str)
+    out = np.zeros(len(codes), dtype=bool)
+    by_len = {}
+    for g in geos:
+        by_len.setdefault(len(str(g)), set()).add(str(g))
+    for n, gs in by_len.items():
+        out |= codes.str[:n].isin(gs).to_numpy()
+    return out
+
 def read_census(file_list, geos, usecols, columns):
     dfs = []
     for f in file_list:
@@ -62,7 +77,7 @@ def read_census(file_list, geos, usecols, columns):
     df_all.set_index('Geo',drop=True,inplace=True)
     if geos is not None:
         geos = [str(g) for g in geos]
-        df_all = df_all[df_all.index.map(lambda x: np.any([x.startswith(g) for g in geos]))].copy(deep=True)
+        df_all = df_all[prefix_mask(df_all.index, geos)].copy(deep=True)
     return df_all
 
 def read_acs(table,geos=None,year=None):
@@ -102,7 +117,7 @@ def read_cbg_geo(geos=None):
     files = glob(os.path.join(OUTPUT_DIR, "geo", "tl_*_bg.zip"))
     cbg_geo = pd.concat([gpd.read_file(f) for f in files]).set_index('GEOID')
     if geos is not None:
-        geo_mask = cbg_geo.index.map(lambda x: np.any([x.startswith(g) for g in geos]))
+        geo_mask = prefix_mask(cbg_geo.index, geos)
         cbg_geo = cbg_geo[geo_mask].copy(deep=True)
     cbg_geo['county'] = cbg_geo['STATEFP'] + cbg_geo['COUNTYFP']
     ## centroid of each cbg, in projection 18N coords
@@ -125,12 +140,13 @@ def read_work_commute():
         df["main"] = False
         dfs.append(df)
     od = pd.concat(dfs,ignore_index=True)
-    od['w_cbg'] = od['w_geocode'].apply(lambda x: x[0:12])
-    od['h_cbg'] = od['h_geocode'].apply(lambda x: x[0:12])
-    od['w_county'] = od['w_geocode'].apply(lambda x: x[0:5])
-    od['h_county'] = od['h_geocode'].apply(lambda x: x[0:5])
-    od['w_state'] = od['w_geocode'].apply(lambda x: x[0:2])
-    od['h_state'] = od['h_geocode'].apply(lambda x: x[0:2])
+    ## vectorized slices (same strings as the per-row lambdas they replace)
+    od['w_cbg'] = od['w_geocode'].str[0:12]
+    od['h_cbg'] = od['h_geocode'].str[0:12]
+    od['w_county'] = od['w_geocode'].str[0:5]
+    od['h_county'] = od['h_geocode'].str[0:5]
+    od['w_state'] = od['w_geocode'].str[0:2]
+    od['h_state'] = od['h_geocode'].str[0:2]
     return od
 
 def read_cbp(counties):
@@ -185,7 +201,7 @@ def read_sch_data(geos=None, main_year=None):
         .loc[:, scols]
     )
     if geos is not None:
-        geo_mask = np.any([schools['CNTY'].str.startswith(g) for g in [s[0:5] for s in geos]], axis=0)
+        geo_mask = prefix_mask(schools['CNTY'], [s[0:5] for s in geos])
     else:
         geo_mask = np.ones(schools.shape[0]).astype(bool)
     schools = schools.loc[geo_mask
@@ -259,7 +275,9 @@ def read_psamp(LODES_cutoff, ind_codes, occ_codes):
     ####
     
     # Normalize PUMA to fixed-width code so keys align with crosswalk-derived st_puma (STATE + 5-digit PUMA).
-    psamp['ST'] = psamp['ST'].astype(str).str.strip()
+    ## 2-digit state code: the 2023 PUMS files have ST=9 for 09 (and 1-8), so st_puma never matched
+    ## the crosswalks and CO found no samples in AL, AK, AZ, AR, CA, CO and CT
+    psamp['ST'] = psamp['ST'].astype(str).str.strip().str.zfill(2)
     psamp['PUMA'] = psamp['PUMA'].astype(str).str.strip().str.zfill(5)
     psamp['st_puma'] = psamp['ST'] + psamp['PUMA']
     psamp['sch_grade'] = psamp['SCHG'].map(dict(zip([str(x) for x in range(1,17)], ['p','k',*[str(x) for x in range(1,13)],'c','g'])))
@@ -528,7 +546,7 @@ def generate_samples(sample_columns, ADJINC, inc_cats, inc_cols, LODES_cutoff, i
 
     samp_geo = hsamp[['PUMA', 'ST']].reset_index().copy(deep=True)
     # Normalize household PUMA keys to avoid float artifacts (e.g., "903.0") and preserve leading zeros.
-    samp_geo['ST'] = samp_geo['ST'].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    samp_geo['ST'] = samp_geo['ST'].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).str.zfill(2)
     samp_geo['PUMA'] = samp_geo['PUMA'].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).str.zfill(5)
     samp_geo['st_puma'] = samp_geo['ST'] + samp_geo['PUMA']
     ## simpler: place each puma in its primary cbsa
@@ -1262,7 +1280,10 @@ def generate_targets(target_columns, geos, geo_xwalk, gq_stats, inc_cats, inc_co
     df_bounds["mil_gq_workers"] = (df_bounds["_p_mil"] * df_bounds["_gq_workers"])#.round(0)
 
     ## initial starting point for hh workers by ind/occ = ACS sums * hh workers / total workers
-    df_bounds["_p_hh"] = (df_bounds["hh_workers"] / df_bounds["total_workers"]).fillna(0.0)
+    ## no workers: share 0 (hh_workers can be a tiny positive remainder there, and x/0 is inf, which
+    ## fillna misses; the inf became NaN industry targets and stopped CO.jl)
+    df_bounds["_p_hh"] = np.where(df_bounds["total_workers"] > 0,
+                                  df_bounds["hh_workers"] / df_bounds["total_workers"].where(df_bounds["total_workers"] > 0, 1), 0.0)
     df_bounds.to_csv(os.path.join(PROCESSED_DIR,'df_bounds_test.csv'))
     ind_df = ind_df.join(df_bounds[["_p_hh"]])
     occ_df = occ_df.join(df_bounds[["_p_hh"]])
@@ -1428,9 +1449,9 @@ def read_origin_destination(geos, commute_states):
 
     if geos is not None:
         ## work in the synth area, live anywhere
-        work_in_area = np.any([od['w_geocode'].str.startswith(g) for g in geos],axis=0)
+        work_in_area = prefix_mask(od['w_geocode'], geos)
         ## live in the synth area, work anywhere in the state(s) with od files provided
-        live_in_area = np.any([od['h_geocode'].str.startswith(g) for g in geos],axis=0)
+        live_in_area = prefix_mask(od['h_geocode'], geos)
     else: 
         ## if no synth area geos specified, assume work area is synth area
         main_states = od.loc[od["main"]==True, "w_state"].unique()
@@ -1514,7 +1535,7 @@ def read_industry_by_dest(geos, ind_codes, ind_keys):
     wac['w_state'] = wac['w_geocode'].apply(lambda x: x[0:2])
 
     if geos is not None:
-        in_area = np.any([wac['w_geocode'].str.startswith(g) for g in geos],axis=0)
+        in_area = prefix_mask(wac['w_geocode'], geos)
         wac = wac.loc[in_area]
 
     ## sum the WAC columns corresponding to each industry

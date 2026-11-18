@@ -164,12 +164,41 @@ function drawCounts!(v::AbstractArray{I}) where {I<:Integer}
 end
 
 ## sample n from a vec of counts; returns vec of indices and depletes counts
+##
+## Same draws as calling drawCounts!(v) n times, but each draw scans only the nonzero entries.
+## StatsBase's weighted sample takes t = rand() * sum(v) and returns the first index whose
+## cumulative weight reaches t (scanning from index 1); zero entries never change the running
+## sum, so skipping them returns the same index from the same random number. The original
+## scanned the whole vector per draw (n draws x length(v)), which dominates for large regions
+## (e.g. every origin cbg for each worker drawn at a destination).
 function drawCounts!(v::AbstractArray{Ia}, n::Ib) where {Ia<:Integer,Ib<:Integer}
     ## should probably throw an error if n > sum(v)
-    n = min(n,sum(v))
+    tot = sum(v)
+    n = min(n,tot)
     res = zeros(Int64, n)
-    for i in 1:n
-        res[i] = drawCounts!(v)
+    n < 1 && return res
+    idx = collect(eachindex(v))
+    nz = idx[findall(!iszero, vec(v))]
+    first_i = first(idx)
+    last_i = last(idx)
+    for k in 1:n
+        t = rand() * tot
+        cw = v[first_i]
+        i = first_i
+        if cw < t
+            i = last_i              ## StatsBase stops at the last index if t is never reached
+            for j in nz
+                j == first_i && continue
+                cw += v[j]
+                if cw >= t
+                    i = j
+                    break
+                end
+            end
+        end
+        v[i] -= 1
+        tot -= 1
+        res[k] = i
     end
     return res
 end
