@@ -45,9 +45,9 @@ class _SubgroupTracking(ss.Analyzer):
         groups = np.unique(self.sim.people[self.subgroup])
         self.n_outcome = {group: [] for group in groups}
 
-    def record_stocks(self):
+    def record_states(self):
         """Count at the start of each step, so t_0 is the state the run starts from."""
-        super().record_stocks()
+        super().record_states()
         people = self.sim.people
         has_outcome = self.sim.diseases[0][self.outcome]
         if self.state_id is not None:
@@ -163,7 +163,6 @@ class _GPNetwork(ss.Network):
             self.edges.weight = self.network_df['edge_weight'].values.astype(float)
         else:
             self.edges.weight = np.full(len(self.network_df), self.edge_weight)
-        self.validate()
 
     def _network_config(self):
         """Resolve path -- which population to read.
@@ -200,7 +199,7 @@ class _GPNetwork(ss.Network):
             _NET_SAVED[self.name] = weight
 
     def step(self):
-        self.validate()
+        pass # Static network: the edges never change
 
 
 def _create_network(name, path):
