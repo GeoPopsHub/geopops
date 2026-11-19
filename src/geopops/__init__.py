@@ -1,6 +1,5 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Johns Hopkins University
-# Last verified on: Starsim 4.0.0rc3 (6239f72bf)
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Copyright (c) 2026 Johns Hopkins University
 from .write_config import write_config
 from .download_data import download_data
 from .process_data import process_data, quality_check, QualityCheck

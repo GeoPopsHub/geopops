@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Johns Hopkins University
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Copyright (c) 2026 Johns Hopkins University
 import json
 import os
 from dotenv import load_dotenv, find_dotenv
@@ -21,6 +21,10 @@ def _merge_dict(base, override):
 def load_config(base_dir=None):
     cfg_dir = base_dir if base_dir is not None else BASE_DIR
     cfg_path = os.path.join(cfg_dir, "config.json")
+    # config.json is gitignored and written by write_config(), so a fresh
+    # install starts from the shipped defaults instead.
+    if not os.path.exists(cfg_path):
+        cfg_path = os.path.join(cfg_dir, "config_defaults.json")
     with open(cfg_path, "r") as f:
         config = json.load(f)
 

@@ -1,15 +1,11 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Johns Hopkins University
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Copyright (c) 2026 Johns Hopkins University
+# Copyright (c) 2023 Alexander Tulchinsky
 '''
-Copyright 2023 Alexander Tulchinsky
+Derived from GREASYPOP-CO's census data processing code
+(https://github.com/CDDEP-DC/GREASYPOP-CO).
 
-This file is part of Greasypop.
-
-Greasypop is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
-
-Greasypop is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License along with Greasypop. If not, see <https://www.gnu.org/licenses/>.
+Licensed under the Clear BSD License. See the LICENSE file for the full text.
 '''
 
 import pandas as pd
@@ -18,7 +14,9 @@ from numpy import array as arr
 import geopandas as gpd
 from shapely.geometry.point import Point
 import os
+import re
 import shutil
+import warnings
 from glob import glob
 import json
 
@@ -67,14 +65,21 @@ def read_census(file_list, geos, usecols, columns):
         df_all = df_all[df_all.index.map(lambda x: np.any([x.startswith(g) for g in geos]))].copy(deep=True)
     return df_all
 
-def read_acs(table,geos=None):
-    filematch = ''.join(['*.', table, '-Data.*'])
+def read_acs(table,geos=None,year=None):
+    """Read an ACS table from census/<state>/. If more than one year of the table was downloaded
+    (e.g. B01001 for 2022 and 2023), the newest year is read, unless `year` is given."""
+    filematch = f'ACSDT5Y{year}.{table}-Data.*' if year is not None else ''.join(['*.', table, '-Data.*'])
     with os.scandir(os.path.join(OUTPUT_DIR, "census")) as d:
-        files = [glob(os.path.join(f,filematch))[0] for f in d 
+        files = [sorted(glob(os.path.join(f,filematch)))[-1] for f in d
                  if f.is_dir() and not f.name.startswith(".")]
     return read_census(files, geos, 
                        (lambda x: (x=='Geography') or (str.split(x,'!!')[0]=='Estimate')),
                        (lambda x: ''.join([table,':',*str.split(x,'!!')[2:]])))
+
+def acs_years(table):
+    """Years of an ACS table downloaded into census/<state>/ (from file names like ACSDT5Y2022.B09019-Data.csv)."""
+    files = glob(os.path.join(OUTPUT_DIR, "census", "*", f"ACSDT5Y*.{table}-Data.*"))
+    return sorted({int(m.group(1)) for f in files if (m := re.match(r'ACSDT5Y(\d{4})\.', os.path.basename(f)))})
 
 def read_decennial(table,geos=None):
     filematch = ''.join(['*.', table, '-Data.*'])
@@ -132,8 +137,20 @@ def read_cbp(counties):
     cbp_dtype = {'fipstate':str,'fipscty':str,'naics':str,'emp':"Int64",'est':"Int64",
         'n1_4':"Int64",'n5_9':"Int64",'n10_19':"Int64",'n20_49':"Int64",'n50_99':"Int64",'n100_249':"Int64",
         'n250_499':"Int64",'n500_999':"Int64",'n1000_1':"Int64",'n1000_2':"Int64",'n1000_3':"Int64",'n1000_4':"Int64"}
-    cbp_US = pd.read_csv(glob(os.path.join(OUTPUT_DIR, "work", "cbp*co.[z|t|c]??"))[0],
+    cbp_dtype_new = {'fipstate':str,'fipscty':str,'naics':str,'emp':"Int64",'est':"Int64",
+                 'n<5':"Int64",'n5_9':"Int64",'n10_19':"Int64",'n20_49':"Int64",'n50_99':"Int64",'n100_249'     :"Int64",
+                 'n250_499':"Int64",'n500_999':"Int64",'n1000_1':"Int64",'n1000_2':"Int64",'n1000_3':"Int64"     ,'n1000_4':"Int64"}
+    try:
+        # try the 2016 and earlier column mapping first
+        cbp_US = pd.read_csv(glob(os.path.join(OUTPUT_DIR, "work", "cbp*co.[z|t|c]??"))[0],
                         usecols=list(cbp_dtype.keys()),dtype=cbp_dtype)
+    except:
+        # if that doesn't work, try the post-2016 column mapping
+        # if there is still an error with this section of the code, might be a third column mapping
+        cbp_US = pd.read_csv(glob(os.path.join(OUTPUT_DIR, "work", "cbp*co.[z|t|c]??"))[0],
+                             usecols=list(cbp_dtype_new.keys()),dtype=cbp_dtype_new,
+                             na_values=['N'])
+        cbp_US.mask(cbp_US.isna(), 0, inplace=True)
     cbp_US['county'] = cbp_US['fipstate'] + cbp_US['fipscty']
     ## this counts employees, regardless of state of residence
     ## incomplete, but we're only using it to estimate avg employer sizes
@@ -749,8 +766,19 @@ def read_geo_xwalk(cbg_index):
 ##
 ## group quarters by age groups, based on ACS
 def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_codes):
-    # everyone, by age group
-    B01001 = read_acs('B01001',geos)
+    # The group-quarters age groups below are differences between counts from B01001 (everyone by
+    # age) and B09019/B09020/B09021 (people and adults in households and group quarters). For main
+    # years with no block-group B09019-B09021 (2023, 2024), download_data uses 2022 for those tables,
+    # so read B01001 for the same year: subtracting counts from different years gives impossible
+    # values (e.g. negative numbers of children in group quarters).
+    gq_year = acs_years('B09019')[-1]
+    if gq_year in acs_years('B01001'):
+        B01001 = read_acs('B01001', geos, year=gq_year)
+    else:
+        warnings.warn(f"No {gq_year} B01001 file to match B09019-B09021 ({gq_year}); using the newest "
+                      f"B01001 for the group-quarters age groups. Re-run download_data(steps=['census']) "
+                      f"to download it.")
+        B01001 = read_acs('B01001', geos)
     ## everyone, incl group quarters
     B09019 = read_acs('B09019',geos)
     ## adults 65+ incl gq
@@ -774,6 +802,18 @@ def generate_gq(geos, df_adults_in_hh, geo_xwalk, p_summary, ind_codes, occ_code
     df_gq['group quarters:under 18'] = df_gq['n_group_quarters'] - df_gq['adult_in_group_quarters']
     df_gq['group quarters:18 to 64'] = df_gq['adult_in_group_quarters'] - df_gq['adult_65o_in_group_quarters']
     df_gq['group quarters:65 and over'] = df_gq['adult_65o_in_group_quarters']
+
+    ## Differences between survey estimates can still be negative in small block groups. Set negative
+    ## age groups to 0 and rescale the block group's age groups so they add up to its group-quarters total.
+    age_cols = ['group quarters:under 18', 'group quarters:18 to 64', 'group quarters:65 and over']
+    negative = (df_gq[age_cols] < 0).any(axis=1)
+    if negative.any():
+        clipped = df_gq.loc[negative, age_cols].clip(lower=0)
+        total = clipped.sum(axis=1)
+        scale = (df_gq.loc[negative, 'group quarters:'] / total).where(total > 0, 0.0)
+        df_gq.loc[negative, age_cols] = clipped.mul(scale, axis=0)
+        print(f"-- group quarters: {int(negative.sum())} block groups had a negative age-group count; "
+              f"set to 0 and rescaled to the block group's group-quarters total")
 
     ## ignore cbgs with less than 20 in gq's
     df_gq = df_gq.loc[df_gq['group quarters:'] > 19, 

@@ -1,5 +1,5 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Johns Hopkins University
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Copyright (c) 2026 Johns Hopkins University
 import os
 import json
 import pandas as pd
@@ -15,6 +15,7 @@ import lzma
 import platform
 import subprocess
 import shlex
+import warnings
 from .write_config import load_config
 
 # Disable SSL warnings for downloads with verify=False
@@ -120,10 +121,9 @@ def try_download(src, dst):
                 print(f"Download attempt failed: {e}")
                 retries -= 1
                 status = -1
-    
+
     if status != 0:
-        print(f"Download failed: {src}")
-        exit(1)
+        raise RuntimeError(f"Download failed after 3 attempts: {src}")
     
     return status
 
@@ -178,10 +178,9 @@ def try_curl_cffi(src, dst):
             retries -= 1
             status = -1
             time.sleep(2)  # Add a small delay between retries
-    
+
     if status != 0:
-        print(f"Download failed: {src}")
-        exit(1)
+        raise RuntimeError(f"Download failed after 3 attempts: {src}")
     
     return status
 
@@ -243,8 +242,7 @@ def try_download_text(src, dst):
                 status = -1
     
     if status != 0:
-        print(f"Text download failed: {src}")
-        exit(1)
+        raise RuntimeError(f"Text download failed after 3 attempts: {src}")
     
     return status
 
@@ -335,7 +333,7 @@ def get_census_data(name, vintage, vars, region, regionin, key):
     df = pd.DataFrame(rows, columns=headers)
     return df
 
-def get_new_dec_data(vintage, state_fips):
+def get_new_dec_data(vintage, state_fips, key):
     """Function for getting 2020 Decennial data using the Census API
 
     Args:
@@ -346,8 +344,9 @@ def get_new_dec_data(vintage, state_fips):
         pandas.DataFrame: DataFrame containing the 2020 decennial data with variables as columns and geographic units as rows
     """
     base_url = f"https://api.census.gov/data/{vintage}/dec/dhc?get=group(P18)&ucgid=pseudo(0400000US{state_fips}$1500000)"
+    params = {"key": key}
     try:
-        response = requests.get(base_url)
+        response = requests.get(base_url, params=params)
         response.raise_for_status()
     except _CONNECTION_ERRORS:
         _explain_connection_error(
@@ -407,10 +406,10 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
         dec_source_url = f"https://api.census.gov/data/{year_DEC}/dec/sf1"
     for state_i in state_fips:
         # Process ACS table codes
-        # Note: no 2023 data for B09019/B09020/B09021
-        # so we need to use 2022 data for these tables if year_ACS is 2023
-    
-        # Effective vintage: use 2022 for B09019/B09020/B09021 when year_ACS is 2023 (no 2023 data)
+        # Note: no 2023 or 2024 block group data for B09019/B09020/B09021
+        # so we need to use 2022 data for these tables if year_ACS is 2023 or 2024
+
+        # Effective vintage: use 2022 for B09019/B09020/B09021 when year_ACS is 2023 or 2024 (no block group data)
         missing_years = {2023, 2024}
         FALLBACK_2022_CODES = {'B09019', 'B09020', 'B09021'}
         def _effective_acs_year(code, year_ACS):
@@ -423,7 +422,15 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
             "table_codes": [f"group({code})" for code in ACS_table_codes],
             "table_name": [f"ACSDT5Y{_effective_acs_year(code, year_ACS)}.{code}-Data" for code in ACS_table_codes],
             "vintage": [_effective_acs_year(code, year_ACS) for code in ACS_table_codes],
-        })   
+        })
+        # process_data.generate_gq subtracts B01001 counts from B09019-B09021 counts, so B01001 is
+        # also needed for the fallback year (B01001 for year_ACS is still downloaded for everything else)
+        if year_ACS in missing_years and FALLBACK_2022_CODES & set(ACS_table_codes) and 'B01001' in ACS_table_codes:
+            table_codes = pd.concat([table_codes, pd.DataFrame({
+                "table_codes": ["group(B01001)"],
+                "table_name": ["ACSDT5Y2022.B01001-Data"],
+                "vintage": [2022],
+            })], ignore_index=True)
     
        
         # table_codes = pd.DataFrame({
@@ -489,7 +496,7 @@ def pull_census_data(state_fips, year_ACS, year_DEC, ACS_table_codes, DEC_table_
             
             # Make the API call and get the data
             if year_DEC == 2020:
-                data = get_new_dec_data(year_DEC, state_i)
+                data = get_new_dec_data(year_DEC, state_i, key)
                 # Remove columns ending in 'A'
                 data = data.loc[:, ~data.columns.str.endswith('A')]
                 data.drop(columns=["ucgid"], inplace=True)
@@ -859,7 +866,7 @@ def pull_LODES(states_main, states_aux, year, verbose=1):
         # Replace original file with processed file
         os.replace(outfile + '.tmp', outfile)
 
-def download_cbp_data(verbose=1):
+def download_cbp_data(year, verbose=1):
     """Function for downloading CBP data
     
     Args:
@@ -873,12 +880,14 @@ def download_cbp_data(verbose=1):
     cbp_dir = os.path.join(OUTPUT_DIR, "work")
     os.makedirs(cbp_dir, exist_ok=True)
     
-    url = "https://www2.census.gov/programs-surveys/cbp/datasets/2016/cbp16co.zip"
-    outfile = os.path.join(cbp_dir, "cbp16co.zip")
+    #url = "https://www2.census.gov/programs-surveys/cbp/datasets/2016/cbp16co.zip"
+    #url = "https://www2.census.gov/programs-surveys/cbp/datasets/2020/cbp20co.zip"
+    url = f"https://www2.census.gov/programs-surveys/cbp/datasets/{year}/cbp{year-2000}co.zip"
+    outfile = os.path.join(cbp_dir, f"cbp{year-2000}co.zip")
     try_download(url, outfile)
     if verbose:
-        print("-- Downloading from https://www2.census.gov/programs-surveys/cbp/datasets/2016/")
-        print("-- work/cbp16co.zip")
+        print("-- Downloading from " + url)
+        print(f"-- work/cbp{year-2000}co.zip")
 
 def download_ct_puma_crosswalk(main_year, verbose=1):
     """Function for downloading Census Tract to PUMA crosswalk file
@@ -1332,6 +1341,9 @@ def download_data(config=None, base_dir=None, verbose=1, steps=None):
     OUTPUT_DIR = config.get("path", base_dir)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+    if os.listdir(OUTPUT_DIR):
+        warnings.warn("Specified destination directory for downloaded data isn't empty! If this directory contains old data from a different year than the current main_year specified, the process_data step will break", UserWarning)
+
     if verbose:
         print("")
         print("============================================================")
@@ -1401,7 +1413,7 @@ def download_data(config=None, base_dir=None, verbose=1, steps=None):
             geocorr_files(verbose)
 
         elif step == "cbp":
-            download_cbp_data(verbose)
+            download_cbp_data(int(config["main_year"]), verbose)
 
         elif step == "school":
             if "main_year" not in config:

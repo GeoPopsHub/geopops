@@ -1,5 +1,6 @@
-# SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Johns Hopkins University
+# SPDX-License-Identifier: BSD-3-Clause-Clear
+# Copyright (c) 2026 Johns Hopkins University
+# Copyright (c) 2023 Alexander Tulchinsky
 """
 Data structures and utility functions for GeoPops synthetic population generation.
 Translated from julia/utils.jl.
@@ -212,16 +213,23 @@ def ranges(vec):
 def drawCounts(v, n=1, rng=None):
     if rng is None:
         rng = np.random.default_rng()
+    # Same draws as calling rng.choice(len(v), p=v/v.sum()) once per draw: choice takes a
+    # cumulative sum of p, normalizes it, and searchsorts one rng.random(). Zero counts never
+    # change a running sum, so doing this over the nonzero entries only picks the same index
+    # from the same random number, without a pass over the whole vector per draw.
     result = []
     n = min(n, int(v.sum()))
+    nz = np.flatnonzero(v)
+    w = v[nz]
+    total = int(w.sum())
     for _ in range(n):
-        total = v.sum()
-        if total == 0:
-            break
-        probs = v.astype(float) / total
-        idx = rng.choice(len(v), p=probs)
-        v[idx] -= 1
-        result.append(idx)
+        cdf = np.cumsum(w / total)
+        cdf /= cdf[-1]
+        j = cdf.searchsorted(rng.random(), side='right')
+        w[j] -= 1
+        total -= 1
+        result.append(nz[j])
+    v[nz] = w
     return result
 
 
