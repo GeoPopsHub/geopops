@@ -395,7 +395,10 @@ def generate_commute_matrices(data_dir):
         m = res_iod[i].tocsr()
         rows, cols, vals = sparse.find(m)
         df = pd.DataFrame({'origin': rows + 1, 'dest': cols + 1, 'p': vals.astype(np.float32)})
-        df.to_csv(os.path.join(proc_dir, f'od_{k}.csv.gz'), index=False, compression='gzip')
+        # gzip level 1: the default (9) spent most of this function's time compressing
+        # files that are read back a moment later; the file contents are the same
+        df.to_csv(os.path.join(proc_dir, f'od_{k}.csv.gz'), index=False,
+                  compression={'method': 'gzip', 'compresslevel': 1})
 
 
 def generate_jobs_and_workers(people, cbgs, gqs, co_results, gq_summary, data_dir,
