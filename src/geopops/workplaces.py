@@ -215,10 +215,12 @@ def pull_inst_workers(count_matrix, dest_idx, origin_labels, workers_by_key, loc
     Modifies count_matrix in place. Returns dict[inst_key -> list[origin_codes]].
     """
     inst_emp_origins = {}
+    # Column sums, kept current as workers are drawn (recomputing them for every
+    # institution was a full pass over the origin x destination matrix each time)
+    colsums = count_matrix.sum(axis=0)
     for inst_id, n_needed in workers_by_key.items():
         cbg = loc_by_key[inst_id]
         geo_areas = [cbg, cbg[:11], cbg[:9], cbg[:7], cbg[:5]]
-        colsums = count_matrix.sum(axis=0)
         dest_lists = [filter_dests(geo, dest_idx, colsums) for geo in geo_areas]
         for dl in dest_lists:
             rng.shuffle(dl)
@@ -238,6 +240,7 @@ def pull_inst_workers(count_matrix, dest_idx, origin_labels, workers_by_key, loc
             drawn = drawCounts(col_view, draw_n, rng)
             count_matrix[:, col] = col_view
             o_idxs.extend(drawn)
+            colsums[col] -= draw_n    # drawCounts removes exactly draw_n (<= the column's sum)
             remaining -= draw_n
             if remaining < 1:
                 break
