@@ -56,14 +56,20 @@ def group_commuters_by_origin(people, cbgs, ind_codes, rng):
 
     df = pd.DataFrame(rows)
     worker_keys = {cat: {cbg_code: [] for cbg_code in cbgs.keys()} for cat in ind_codes}
+    # Each group's tuples are built from its columns (iterrows made a Series per row).
+    # iterrows gave every value the row's common dtype (float when income or category has
+    # NaN), so income is converted to that same dtype to keep the stored values unchanged.
+    row_dtype = np.result_type(*df.dtypes)
 
     for (cat_idx, cbg_idx), group in df.groupby(['category', 'cbg']):
         if cat_idx is None or pd.isna(cat_idx):
             continue
         cat_code = ind_codes[int(cat_idx) - 1]
         cbg_code = cbgs_inv.get(cbg_idx, '')
-        workers = [(int(r['id']), int(r['hh']), int(r['cbg']), r['income'])
-                   for _, r in group.iterrows()]
+        workers = list(zip(group['id'].to_numpy(row_dtype).astype(np.int64).tolist(),
+                           group['hh'].to_numpy(row_dtype).astype(np.int64).tolist(),
+                           group['cbg'].to_numpy(row_dtype).astype(np.int64).tolist(),
+                           group['income'].to_numpy(row_dtype)))
         rng.shuffle(workers)
         worker_keys[cat_code][cbg_code] = workers
 
