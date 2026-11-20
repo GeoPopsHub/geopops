@@ -5,7 +5,8 @@
 #
 # This file is derived from the third-party `ipfn` package, modified by
 # Alexander Tulchinsky so that it works for this workflow. GeoPops inherited
-# the modified file unchanged from GREASYPOP-CO.
+# the modified file unchanged from GREASYPOP-CO, and added ipf_2d (end of file),
+# a whole-array version of the two-dimensional case with identical results.
 #
 # It stays under its own MIT terms rather than the Clear BSD License that
 # covers the rest of GeoPops; the two licenses are compatible.
@@ -334,3 +335,46 @@ class ipfn(object):
             return m, converged, pd.DataFrame({'iteration': range(i), 'conv': conv_list}).set_index('iteration')
         else:
             raise(ValueError(f'wrong verbose input, must be either 0, 1 or 2 but got {self.verbose}'))
+
+
+def ipf_2d(m, row_targets, col_targets, convergence_rate=1e-5, max_iteration=500, rate_tolerance=1e-8):
+    """Two-dimensional IPF: the same result as
+    ipfn(m, [row_targets, col_targets], [[0], [1]], ...).iteration() with verbose=0,
+    computed on whole rows and columns at once instead of one slice at a time.
+
+    The arithmetic matches ipfn_np step for step, so the output is identical:
+    - each row (column) is scaled as slice * 1.0 * target / slice_sum, and left as is when
+      its sum is 0;
+    - each row or column sum is numpy's pairwise sum over that row or column alone, as
+      slice.sum() is. Column sums are therefore taken over a transposed copy:
+      m.sum(axis=0) would add the rows one after another and round differently;
+    - convergence is the largest |sum / target - 1| over rows and columns, skipping zero
+      targets, with the same stopping rule as ipfn.iteration().
+    """
+    m = np.array(m, dtype=float)
+    x_r = np.asarray(row_targets, dtype=float)
+    x_c = np.asarray(col_targets, dtype=float)
+    r_nz, c_nz = x_r != 0, x_c != 0
+    i, conv, old_conv = 0, np.inf, -np.inf
+    while ((i <= max_iteration and conv > convergence_rate)
+           and (i <= max_iteration and abs(conv - old_conv) > rate_tolerance)):
+        old_conv = conv
+        with np.errstate(divide="ignore", invalid="ignore"):
+            s_r = m.sum(axis=1)
+            t = m * 1.0 * x_r[:, None] / s_r[:, None]
+            t[s_r == 0, :] = m[s_r == 0, :]
+            s_c = np.ascontiguousarray(t.T).sum(axis=1)
+            m = t * 1.0 * x_c[None, :] / s_c[None, :]
+            m[:, s_c == 0] = t[:, s_c == 0]
+            dev = np.concatenate([
+                np.abs(m.sum(axis=1)[r_nz] / x_r[r_nz] - 1),
+                np.abs(np.ascontiguousarray(m.T).sum(axis=1)[c_nz] / x_c[c_nz] - 1)])
+        dev = dev[~np.isnan(dev)]    # ipfn's "> max_conv" comparison skips NaN
+        conv = max(0, dev.max()) if dev.size else 0
+        i += 1
+    if i <= max_iteration:
+        if not abs(conv - old_conv) > rate_tolerance:
+            print('ipfn converged: convergence_rate not updating or below rate_tolerance')
+    else:
+        print('Maximum iterations reached')
+    return m

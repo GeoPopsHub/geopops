@@ -10,7 +10,7 @@ import pandas as pd
 import os
 from scipy import sparse
 from .utils import tryJSON, resolve_config, lrRound, lrRound_matrix, rowRound, drawCounts, vecmerge
-from .ipfn import ipfn as IPFN
+from .ipfn import ipf_2d
 
 
 def split_lognormal(n, mu, sigma, draws, rng):
@@ -373,9 +373,7 @@ def generate_commute_matrices(data_dir):
         else:
             preserve_od = d_margin[np.newaxis, :] * m_ind_dest_p[:, d_idxs]
             init_m = np.maximum(preserve_od, 0.00001)
-            IPF = IPFN(init_m.copy(), [ind_margin, d_margin], [[0], [1]],
-                       max_iteration=500, convergence_rate=1e-6)
-            new_m = IPF.iteration()
+            new_m = ipf_2d(init_m, ind_margin, d_margin, convergence_rate=1e-6, max_iteration=500)
             new_margin = new_m.sum(axis=1, keepdims=True)
             zero_rows = np.isclose(new_margin.ravel(), 0.0)
             safe_margin = new_margin.copy()
